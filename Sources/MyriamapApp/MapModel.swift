@@ -85,6 +85,8 @@ final class MapModel {
     private var nightMinute = -1
     private var clock: Timer?
     private var folding: Folding?
+    /// `-unfold 0.4` on the command line starts partly folded.
+    private var launchUnfold = UserDefaults.standard.string(forKey: "unfold").flatMap(Double.init)
     private var foldTimer: Timer?
 
     var date: Date { now.addingTimeInterval(timeOffset) }
@@ -148,6 +150,10 @@ final class MapModel {
             hover = nil
             nightMinute = -1
             refreshNight()
+            if let initial = launchUnfold {
+                launchUnfold = nil
+                unfold = initial
+            }
             refreshFolded()
             status = "\(map.mesh.faceCount) faces · \(map.projection.cutEdges.count) cuts · \(map.pieces().count) pieces"
         }
