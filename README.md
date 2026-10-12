@@ -5,7 +5,10 @@ by a polyhedron with thousands of faces, cut open **along the timezone
 borders**, and unfolded flat. Every timezone becomes its own piece of the map,
 hanging off an equatorial belt like a globe gore, labelled with its live clock.
 
-![The timezone myriahedral map](docs/myriamap.png)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/myriamap-dark.png">
+  <img alt="The timezone myriahedral map" src="docs/myriamap.png">
+</picture>
 
 References:
 
