@@ -64,11 +64,15 @@ final class MapModel {
     /// Offset from the real clock, for scrubbing through the day.
     var timeOffset: TimeInterval = 0 { didSet { refreshNight() } }
     var now = Date()
+    /// 0 folds the map into a globe, 1 lays it flat.
+    var unfold: Double = 1 { didSet { if unfold != oldValue { refreshFolded() } } }
 
     // Outputs.
     private(set) var map: MyriaMap?
     private(set) var staticLayers: [LayerPath] = []
     private(set) var nightLayers: [LayerPath] = []
+    private(set) var foldedLayers: [LayerPath] = []
+    private(set) var isPlayingFold = false
     private(set) var colorSlots: [Int] = []
     private(set) var isBuilding = false
     private(set) var status = "Loading timezone data…"
@@ -80,6 +84,8 @@ final class MapModel {
     private var buildTask: Task<Void, Never>?
     private var nightMinute = -1
     private var clock: Timer?
+    private var folding: Folding?
+    private var foldTimer: Timer?
 
     var date: Date { now.addingTimeInterval(timeOffset) }
     var style: MapStyle { dark ? .dark : .light }
@@ -135,12 +141,14 @@ final class MapModel {
             }
             overlays[configuration.mesh] = map.base
             self.map = map
+            folding = nil
             staticLayers = layers
             colorSlots = slots
             selectedGroup = nil
             hover = nil
             nightMinute = -1
             refreshNight()
+            refreshFolded()
             status = "\(map.mesh.faceCount) faces · \(map.projection.cutEdges.count) cuts · \(map.pieces().count) pieces"
         }
     }
@@ -163,6 +171,39 @@ final class MapModel {
         staticLayers = map.scene(sceneOptions()).paths.map(LayerPath.init)
         nightMinute = -1
         refreshNight()
+        refreshFolded()
+    }
+
+    private func refreshFolded() {
+        guard let map, unfold < 1 else {
+            foldedLayers = []
+            return
+        }
+        if folding == nil { folding = map.folding() }
+        var options = SceneOptions(date: date, style: style)
+        options.showLand = display.land
+        foldedLayers = map.foldedScene(unfold: unfold, folding: folding!, options: options).paths.map(LayerPath.init)
+    }
+
+    /// Animates from the globe to the flat map (or back when already flat).
+    func playFold() {
+        foldTimer?.invalidate()
+        let start = Date(), from = unfold, to: Double = unfold >= 1 ? 0 : 1
+        let duration = 3.5 * abs(to - from)
+        isPlayingFold = true
+        foldTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                let t = min(1, Date().timeIntervalSince(start) / max(duration, 0.01))
+                let eased = t < 0.5 ? 2 * t * t : 1 - pow(-2 * t + 2, 2) / 2
+                self.unfold = from + (to - from) * eased
+                if t >= 1 {
+                    self.foldTimer?.invalidate()
+                    self.foldTimer = nil
+                    self.isPlayingFold = false
+                }
+            }
+        }
     }
 
     private func refreshNight() {

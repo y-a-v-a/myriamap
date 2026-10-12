@@ -38,6 +38,23 @@ public enum BitmapRenderer {
         return data as Data
     }
 
+    /// Encodes scenes as a looping animated GIF.
+    /// - Parameter delays: seconds each frame is shown.
+    public static func gif(_ scenes: [MapScene], delays: [Double], width: Int) throws -> Data {
+        let data = NSMutableData()
+        guard let dest = CGImageDestinationCreateWithData(data, "com.compuserve.gif" as CFString, scenes.count, nil) else {
+            throw BitmapRendererError.encodingFailed
+        }
+        let loop = [kCGImagePropertyGIFDictionary: [kCGImagePropertyGIFLoopCount: 0]] as CFDictionary
+        CGImageDestinationSetProperties(dest, loop)
+        for (scene, delay) in zip(scenes, delays) {
+            let frame = [kCGImagePropertyGIFDictionary: [kCGImagePropertyGIFDelayTime: delay]] as CFDictionary
+            CGImageDestinationAddImage(dest, try image(scene, width: width), frame)
+        }
+        guard CGImageDestinationFinalize(dest) else { throw BitmapRendererError.encodingFailed }
+        return data as Data
+    }
+
     /// Draws into a context whose user space has a top-left origin and the
     /// given mapping's pixel units.
     public static func draw(_ scene: MapScene, in ctx: CGContext, mapping m: CanvasMapping) {

@@ -1,4 +1,5 @@
 import Foundation
+import ImageIO
 import Testing
 import MyriaGeometry
 import ZoneAtlas
@@ -243,5 +244,44 @@ struct ViewportTests {
         let before = v.toView(p)
         v.pan(by: Vec2(30, -10))
         #expect((v.toView(p) - (before + Vec2(30, -10))).length < 1e-9)
+    }
+}
+
+@Suite("Folded scenes")
+struct FoldedSceneTests {
+    static let folding = Fixture.map.folding()
+
+    func zoneArea(_ scene: MapScene) -> Double {
+        scene.paths.filter { $0.role == .zone }.reduce(0) { total, path in
+            total + path.subpaths.reduce(0) { $0 + Planar.signedArea($1) }
+        }
+    }
+
+    @Test func flatFoldMatchesTheMap() {
+        let options = SceneOptions(date: Fixture.date)
+        let folded = Fixture.map.foldedScene(unfold: 1, folding: Self.folding, options: options)
+        let flat = Fixture.map.scene(options)
+        #expect(abs(zoneArea(folded) / zoneArea(flat) - 1) < 1e-9)
+    }
+
+    @Test func closedFoldIsAGlobeAtTheOrigin() {
+        let scene = Fixture.map.foldedScene(unfold: 0, folding: Self.folding, options: SceneOptions(date: Fixture.date))
+        for path in scene.paths {
+            for ring in path.subpaths {
+                for p in ring { #expect(p.length < 1.05) }
+            }
+        }
+        #expect(scene.bounds.contains(Vec2(1, 1)))
+        // Batched per depth bucket and colour, not per face.
+        #expect(scene.paths.count < Fixture.map.mesh.faceCount / 4)
+    }
+
+    @Test func gifEncodesEveryFrame() throws {
+        let options = SceneOptions(date: Fixture.date)
+        let scenes = [0.0, 0.5, 1.0].map { Fixture.map.foldedScene(unfold: $0, folding: Self.folding, options: options) }
+        let gif = try BitmapRenderer.gif(scenes, delays: [0.1, 0.1, 0.1], width: 200)
+        #expect(gif.starts(with: Array("GIF8".utf8)))
+        let source = try #require(CGImageSourceCreateWithData(gif as CFData, nil))
+        #expect(CGImageSourceGetCount(source) == 3)
     }
 }

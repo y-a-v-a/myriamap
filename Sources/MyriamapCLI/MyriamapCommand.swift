@@ -9,7 +9,7 @@ struct MyriamapCommand: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "myriamap",
         abstract: "A timezone map cut along timezone borders and unfolded as a myriahedral projection.",
-        subcommands: [Render.self, Zone.self, Zones.self, Stats.self],
+        subcommands: [Render.self, Animate.self, Zone.self, Zones.self, Stats.self],
         defaultSubcommand: Render.self)
 }
 
@@ -92,6 +92,9 @@ struct Render: ParsableCommand {
     @Flag(help: "Draw the polyhedron's faces.")
     var showMesh = false
 
+    @Option(help: "Fold the map back towards the globe: 0 closed, 1 flat (default).")
+    var unfold: Double?
+
     @Flag(help: "Mark faces that overlap other faces in the unfolded map.")
     var showOverlaps = false
 
@@ -111,7 +114,12 @@ struct Render: ParsableCommand {
         options.showCuts = showCuts
         options.showMesh = showMesh
         if showOverlaps { options.markedFaces = MapReport(map: built).overlappingFaces }
-        let scene = timed("scene", verbose: verbose) { built.scene(options) }
+        let scene = timed("scene", verbose: verbose) {
+            if let unfold, unfold < 1 {
+                return built.foldedScene(unfold: unfold, folding: built.folding(), options: options)
+            }
+            return built.scene(options)
+        }
         let url = URL(fileURLWithPath: output)
         try timed("write", verbose: verbose) {
             if url.pathExtension.lowercased() == "png" {
@@ -122,6 +130,45 @@ struct Render: ParsableCommand {
             }
         }
         print("Wrote \(url.path)")
+    }
+}
+
+struct Animate: ParsableCommand {
+    static let configuration = CommandConfiguration(
+        abstract: "Write an animated GIF of the globe unfolding into the map.")
+
+    @OptionGroup var map: MapOptions
+
+    @Option(name: .shortAndLong, help: "Output .gif file.")
+    var output: String = "myriamap-unfold.gif"
+
+    @Option(help: "Frame width in pixels.")
+    var width: Int = 900
+
+    @Option(help: "Frames for the unfolding.")
+    var frames: Int = 40
+
+    @Flag(help: "Use the dark palette.")
+    var dark = false
+
+    func run() throws {
+        let configuration = try map.configuration()
+        let built = try MyriaMap(data: try GeoData.bundled(), configuration: configuration)
+        let folding = built.folding()
+        let options = SceneOptions(date: configuration.referenceDate, style: dark ? .dark : .light)
+        var scenes: [MapScene] = []
+        var delays: [Double] = []
+        for i in 0...frames {
+            let t = Double(i) / Double(frames)
+            let eased = t < 0.5 ? 2 * t * t : 1 - pow(-2 * t + 2, 2) / 2
+            scenes.append(built.foldedScene(unfold: eased, folding: folding, options: options))
+            delays.append(i == 0 ? 1.2 : 0.06)
+        }
+        // Hold on the finished map, clocks and all.
+        scenes.append(built.scene(options))
+        delays.append(3)
+        try BitmapRenderer.gif(scenes, delays: delays, width: width).write(to: URL(fileURLWithPath: output))
+        print("Wrote \(output)")
     }
 }
 

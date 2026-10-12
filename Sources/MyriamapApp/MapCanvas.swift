@@ -20,6 +20,10 @@ struct MapCanvas: View {
                     context.fill(Path(CGRect(origin: .zero, size: geometry.size)), with: .color(Color(model.style.page)))
                     var mapContext = context
                     mapContext.concatenate(transform(view))
+                    if model.unfold < 1 {
+                        draw(model.foldedLayers, in: &mapContext, scale: view.scale)
+                        return
+                    }
                     draw(model.staticLayers, in: &mapContext, scale: view.scale)
                     draw(model.nightLayers, in: &mapContext, scale: view.scale)
                     if let map = model.map {
@@ -35,6 +39,7 @@ struct MapCanvas: View {
                 }
                 TimelineView(.periodic(from: .now, by: 1)) { _ in
                     Canvas { context, _ in
+                        guard model.unfold >= 1 else { return }
                         for label in model.labels() {
                             let q = view.toView(label.position)
                             let size = label.size * view.scale
@@ -59,6 +64,7 @@ struct MapCanvas: View {
             .onContinuousHover { phase in
                 switch phase {
                 case .active(let location):
+                    guard model.unfold >= 1 else { return model.hover = nil }
                     model.hover(at: view.toMap(Vec2(location.x, location.y)), viewPoint: location)
                 case .ended:
                     model.hover = nil
@@ -98,6 +104,9 @@ struct MapCanvas: View {
                     }
                     .onEnded { _ in pinchStart = nil }
             )
+            .overlay(alignment: .bottomLeading) {
+                FoldControl(model: model).padding(12)
+            }
             .overlay(alignment: .bottomTrailing) {
                 ZoomControls(
                     zoomIn: { zoom(view, by: 1.6) },
@@ -191,6 +200,30 @@ struct ZoomControls: View {
         }
         .buttonStyle(.borderless)
         .padding(6)
+        .background(.regularMaterial, in: Capsule())
+    }
+}
+
+/// Folds the map back into the globe it came from.
+struct FoldControl: View {
+    @Bindable var model: MapModel
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Button {
+                model.playFold()
+            } label: {
+                Image(systemName: model.unfold >= 1 ? "globe" : "map")
+            }
+            .buttonStyle(.borderless)
+            .help(model.unfold >= 1 ? "Fold the map into a globe" : "Unfold the globe into the map")
+            .disabled(model.isPlayingFold)
+            Slider(value: $model.unfold, in: 0...1)
+                .frame(width: 140)
+                .help("Fold: globe on the left, flat map on the right")
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
         .background(.regularMaterial, in: Capsule())
     }
 }
