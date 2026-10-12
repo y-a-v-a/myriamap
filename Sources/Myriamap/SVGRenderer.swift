@@ -70,6 +70,31 @@ public enum SVGRenderer {
     }
 
     static func number(_ v: Double, digits: Int = 1) -> String {
+        // Fast path: scale to an integer and print that. It rounds like
+        // "%.Nf" unless the scaled value sits on a rounding tie, where the
+        // last binary digits decide; those go through String(format:).
+        let factor = [1.0, 10, 100, 1000][min(max(digits, 0), 3)]
+        let scaled = v * factor
+        let rounded = scaled.rounded()
+        if abs(scaled) < 1e12, abs(abs(scaled - rounded) - 0.5) > 1e-6, digits <= 3 {
+            var n = Int(rounded)
+            if n == 0 { return "0" }
+            let negative = n < 0
+            n = abs(n)
+            let unit = Int(factor)
+            var fraction = n % unit, places = digits
+            while places > 0, fraction % 10 == 0 {
+                fraction /= 10
+                places -= 1
+            }
+            var s = negative ? "-" : ""
+            s += String(n / unit)
+            if places > 0 {
+                let f = String(fraction)
+                s += "." + String(repeating: "0", count: places - f.count) + f
+            }
+            return s
+        }
         let s = String(format: "%.\(digits)f", v)
         if s.contains(".") {
             var t = s

@@ -15,44 +15,12 @@ struct MapCanvas: View {
         GeometryReader { geometry in
             let size = Vec2(geometry.size.width, geometry.size.height)
             let view = currentViewport(size: size)
+            // Separate views, so the hover card moving with the pointer
+            // doesn't redraw the map underneath it.
             ZStack(alignment: .topLeading) {
-                Canvas(opaque: true, rendersAsynchronously: true) { context, _ in
-                    context.fill(Path(CGRect(origin: .zero, size: geometry.size)), with: .color(Color(model.style.page)))
-                    var mapContext = context
-                    mapContext.concatenate(transform(view))
-                    if model.unfold < 1 {
-                        draw(model.foldedLayers, in: &mapContext, scale: view.scale)
-                        return
-                    }
-                    draw(model.staticLayers, in: &mapContext, scale: view.scale)
-                    draw(model.nightLayers, in: &mapContext, scale: view.scale)
-                    if let map = model.map {
-                        for g in Set([model.selectedGroup, model.hover?.group].compactMap { $0 }) {
-                            let outline = Path { p in
-                                for line in map.outline(ofGroup: g) { p.addLines(line.map { CGPoint(x: $0.x, y: $0.y) }) }
-                            }
-                            mapContext.stroke(outline, with: .color(Color(model.style.highlight)),
-                                              style: StrokeStyle(lineWidth: (g == model.selectedGroup ? 2 : 1.2) / view.scale,
-                                                                 lineCap: .round, lineJoin: .round))
-                        }
-                    }
-                }
-                TimelineView(.periodic(from: .now, by: 1)) { _ in
-                    Canvas { context, _ in
-                        guard model.unfold >= 1 else { return }
-                        for label in model.labels() {
-                            let q = view.toView(label.position)
-                            let size = label.size * view.scale
-                            guard size >= 7 else { continue }
-                            let text = Text(label.text)
-                                .font(.system(size: size, weight: label.weight == .bold ? .semibold : .regular))
-                                .monospacedDigit()
-                                .foregroundStyle(Color(label.color))
-                            context.draw(text, at: CGPoint(x: q.x, y: q.y), anchor: .center)
-                        }
-                    }
-                    .allowsHitTesting(false)
-                }
+                MapLayers(model: model, viewport: view)
+                HighlightLayer(model: model, viewport: view)
+                ClockLabels(model: model, viewport: view)
                 if let hover = model.hover {
                     HoverCard(info: hover, date: model.date)
                         .offset(x: min(hover.viewPoint.x + 16, geometry.size.width - 240),
@@ -143,22 +111,93 @@ struct MapCanvas: View {
         v.center = label.position
         withAnimation(.easeOut(duration: 0.3)) { viewport = v }
     }
+}
 
-    private func transform(_ v: Viewport) -> CGAffineTransform {
-        CGAffineTransform(a: v.scale, b: 0, c: 0, d: -v.scale,
-                          tx: v.size.x / 2 - v.center.x * v.scale, ty: v.size.y / 2 + v.center.y * v.scale)
+extension Viewport {
+    /// Map coordinates to view coordinates.
+    var transform: CGAffineTransform {
+        CGAffineTransform(a: scale, b: 0, c: 0, d: -scale,
+                          tx: size.x / 2 - center.x * scale, ty: size.y / 2 + center.y * scale)
     }
+}
 
-    private func draw(_ layers: [LayerPath], in context: inout GraphicsContext, scale: Double) {
-        for layer in layers {
-            if let fill = layer.fill {
-                context.fill(layer.path, with: .color(fill), style: FillStyle(eoFill: false, antialiased: true))
-            }
-            if let stroke = layer.stroke {
-                context.stroke(layer.path, with: .color(stroke),
-                               style: StrokeStyle(lineWidth: layer.lineWidth / scale, lineCap: .round, lineJoin: .round))
+/// The map itself: the flat map with day and night, or the folded globe.
+/// Reads only what it draws, so it redraws for those changes and for the
+/// viewport, not for hover or clocks.
+struct MapLayers: View {
+    let model: MapModel
+    let viewport: Viewport
+
+    var body: some View {
+        let background = Color(model.style.page)
+        // Folded frames arrive from a background build; until the first one
+        // is ready the flat map stands in.
+        let layers = model.foldedLayers.isEmpty ? model.staticLayers + model.nightLayers : model.foldedLayers
+        let viewport = viewport
+        Canvas(opaque: true, rendersAsynchronously: true) { context, size in
+            context.fill(Path(CGRect(origin: .zero, size: size)), with: .color(background))
+            var mapContext = context
+            mapContext.concatenate(viewport.transform)
+            for layer in layers {
+                if let fill = layer.fill {
+                    mapContext.fill(layer.path, with: .color(fill), style: FillStyle(eoFill: false, antialiased: true))
+                }
+                if let stroke = layer.stroke {
+                    mapContext.stroke(layer.path, with: .color(stroke),
+                                      style: StrokeStyle(lineWidth: layer.lineWidth / viewport.scale,
+                                                         lineCap: .round, lineJoin: .round))
+                }
             }
         }
+    }
+}
+
+/// Outlines of the selected and the hovered zone.
+struct HighlightLayer: View {
+    let model: MapModel
+    let viewport: Viewport
+
+    var body: some View {
+        let selected = model.selectedGroup
+        let groups = model.unfold >= 1 ? Set([selected, model.hoverGroup].compactMap { $0 }) : []
+        let outlines = groups.compactMap { g in model.outline(ofGroup: g).map { (path: $0, width: g == selected ? 2.0 : 1.2) } }
+        let color = Color(model.style.highlight)
+        let viewport = viewport
+        Canvas { context, _ in
+            var mapContext = context
+            mapContext.concatenate(viewport.transform)
+            for outline in outlines {
+                mapContext.stroke(outline.path, with: .color(color),
+                                  style: StrokeStyle(lineWidth: outline.width / viewport.scale,
+                                                     lineCap: .round, lineJoin: .round))
+            }
+        }
+        .allowsHitTesting(false)
+    }
+}
+
+/// Every piece's clock. The model's clock ticks every second, which
+/// refreshes them.
+struct ClockLabels: View {
+    let model: MapModel
+    let viewport: Viewport
+
+    var body: some View {
+        let labels = model.unfold >= 1 ? model.labels() : []
+        let viewport = viewport
+        Canvas { context, _ in
+            for label in labels {
+                let q = viewport.toView(label.position)
+                let size = label.size * viewport.scale
+                guard size >= 7 else { continue }
+                let text = Text(label.text)
+                    .font(.system(size: size, weight: label.weight == .bold ? .semibold : .regular))
+                    .monospacedDigit()
+                    .foregroundStyle(Color(label.color))
+                context.draw(text, at: CGPoint(x: q.x, y: q.y), anchor: .center)
+            }
+        }
+        .allowsHitTesting(false)
     }
 }
 

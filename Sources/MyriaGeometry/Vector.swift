@@ -100,24 +100,24 @@ public struct Rect2: Hashable, Sendable {
     /// An empty rectangle that any union replaces.
     public static let empty = Rect2(minX: .infinity, minY: .infinity, maxX: -.infinity, maxY: -.infinity)
 
-    public init<S: Sequence>(bounding points: S) where S.Element == Vec2 {
+    @inlinable public init<S: Sequence>(bounding points: S) where S.Element == Vec2 {
         self = .empty
         for p in points { include(p) }
     }
 
-    public var isEmpty: Bool { minX > maxX || minY > maxY }
+    @inlinable public var isEmpty: Bool { minX > maxX || minY > maxY }
     public var width: Double { maxX - minX }
     public var height: Double { maxY - minY }
     public var center: Vec2 { Vec2((minX + maxX) / 2, (minY + maxY) / 2) }
 
-    public mutating func include(_ p: Vec2) {
+    @inlinable public mutating func include(_ p: Vec2) {
         minX = Swift.min(minX, p.x)
         minY = Swift.min(minY, p.y)
         maxX = Swift.max(maxX, p.x)
         maxY = Swift.max(maxY, p.y)
     }
 
-    public mutating func include(_ r: Rect2) {
+    @inlinable public mutating func include(_ r: Rect2) {
         guard !r.isEmpty else { return }
         minX = Swift.min(minX, r.minX)
         minY = Swift.min(minY, r.minY)
@@ -125,11 +125,11 @@ public struct Rect2: Hashable, Sendable {
         maxY = Swift.max(maxY, r.maxY)
     }
 
-    public func contains(_ p: Vec2) -> Bool {
+    @inlinable public func contains(_ p: Vec2) -> Bool {
         p.x >= minX && p.x <= maxX && p.y >= minY && p.y <= maxY
     }
 
-    public func intersects(_ r: Rect2) -> Bool {
+    @inlinable public func intersects(_ r: Rect2) -> Bool {
         !(r.minX > maxX || r.maxX < minX || r.minY > maxY || r.maxY < minY)
     }
 

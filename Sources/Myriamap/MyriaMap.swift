@@ -123,6 +123,8 @@ public struct MyriaMap: Sendable {
     public let faceGroups: [Int]
     public let projection: MyriahedralProjection
     public let labels: [GroupLabel]
+    /// Colour slot per zone group, neighbours apart (see `groupColorSlots`).
+    public let colorSlots: [Int]
 
     public var mesh: MyriahedralMesh { base.mesh }
     public var overlay: FaceOverlay { base.overlay }
@@ -161,6 +163,8 @@ public struct MyriaMap: Sendable {
         projection = MyriahedralProjection(mesh: mesh, hinges: hinges, root: root)
         labels = Self.placeLabels(mesh: mesh, overlay: overlay, grouping: grouping, faceGroups: faceGroups,
                                   projection: projection)
+        colorSlots = Self.groupColorSlots(mesh: mesh, faceGroups: faceGroups, groupCount: grouping.groups.count,
+                                          slotCount: MapStyle.slotCount)
     }
 
     /// Convenience: builds the mesh overlay and the map in one go.

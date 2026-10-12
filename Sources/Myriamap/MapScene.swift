@@ -66,7 +66,13 @@ extension MyriaMap {
     /// Graph colouring of the zone groups: adjacent groups (on the globe) get
     /// different slots, using as few slots as the greedy order allows.
     public func groupColorSlots(slotCount: Int) -> [Int] {
-        var neighbors = Array(repeating: Set<Int>(), count: grouping.groups.count)
+        slotCount == MapStyle.slotCount ? colorSlots
+            : Self.groupColorSlots(mesh: mesh, faceGroups: faceGroups, groupCount: grouping.groups.count,
+                                   slotCount: slotCount)
+    }
+
+    static func groupColorSlots(mesh: MyriahedralMesh, faceGroups: [Int], groupCount: Int, slotCount: Int) -> [Int] {
+        var neighbors = Array(repeating: Set<Int>(), count: groupCount)
         for edge in mesh.topology.edges {
             let a = faceGroups[edge.leftFace], b = faceGroups[edge.rightFace]
             if a >= 0, b >= 0, a != b {
@@ -98,7 +104,6 @@ extension MyriaMap {
         func mapped(_ ring: [Vec2], _ f: Int) -> [Vec2] { ring.map(transforms[f].apply) }
 
         var paths: [ScenePath] = []
-        let slots = groupColorSlots(slotCount: MapStyle.slotCount)
 
         // Zone fills, one path per group.
         var zoneRings = Array(repeating: [[Vec2]](), count: grouping.groups.count)
@@ -111,7 +116,7 @@ extension MyriaMap {
         for (g, rings) in zoneRings.enumerated() where !rings.isEmpty {
             // A hairline stroke in the fill colour seals the slits that open
             // between rows inside a zone.
-            let color = style.zoneColor(slot: slots[g])
+            let color = style.zoneColor(slot: colorSlots[g])
             paths.append(ScenePath(role: .zone, subpaths: rings, closed: true,
                                    fill: color, stroke: options.sealSlits ? color : nil, lineWidth: 0.7, group: g))
         }
@@ -191,18 +196,30 @@ extension MyriaMap {
     /// astronomical darkness stacked on top of each other.
     public func nightLayers(date: Date, style: MapStyle) -> [ScenePath] {
         let sun = SolarPosition.sunDirection(at: date)
-        return [0.0, 6, 12, 18].map { depression in
-            let threshold = -sin(depression * .pi / 180)
-            var rings: [[Vec2]] = []
-            for f in 0..<mesh.faceCount {
-                let frame = mesh.frames[f]
-                let local = frame.localVertices
-                let values = local.map { threshold - frame.spherePoint($0).dot(sun) }
-                if values.allSatisfy({ $0 < 0 }) { continue }
-                let dark = values.allSatisfy { $0 >= 0 } ? local : Planar.clip(local, values: values)
-                if dark.count >= 3 { rings.append(dark.map(projection.unfolding.transforms[f].apply)) }
+        // Sine of the sun's elevation below which each layer is dark; deeper
+        // layers have lower thresholds.
+        let thresholds = [0.0, 6, 12, 18].map { -sin($0 * .pi / 180) }
+        var layers = Array(repeating: [[Vec2]](), count: thresholds.count)
+        var elevation: [Double] = []
+        for f in 0..<mesh.faceCount {
+            let frame = mesh.frames[f]
+            let local = frame.localVertices
+            elevation.removeAll(keepingCapacity: true)
+            for q in local { elevation.append(frame.spherePoint(q).dot(sun)) }
+            let lowest = elevation.min()!, highest = elevation.max()!
+            for (k, threshold) in thresholds.enumerated() {
+                // In daylight for this layer, and so for every deeper one.
+                if lowest > threshold { break }
+                if highest <= threshold {
+                    layers[k].append(projection.mapPolygons[f])
+                    continue
+                }
+                let dark = Planar.clip(local, values: elevation.map { threshold - $0 })
+                if dark.count >= 3 { layers[k].append(dark.map(projection.unfolding.transforms[f].apply)) }
             }
-            return ScenePath(role: .night, subpaths: rings, closed: true, fill: style.night, stroke: nil, lineWidth: 0)
+        }
+        return layers.map { rings in
+            ScenePath(role: .night, subpaths: rings, closed: true, fill: style.night, stroke: nil, lineWidth: 0)
         }
     }
 

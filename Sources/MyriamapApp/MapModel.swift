@@ -95,7 +95,13 @@ final class MapModel {
     private(set) var colorSlots: [Int] = []
     private(set) var isBuilding = false
     private(set) var status = "Loading timezone data…"
-    var hover: HoverInfo?
+    var hover: HoverInfo? {
+        didSet { if hover?.group != hoverGroup { hoverGroup = hover?.group } }
+    }
+    /// The group under the pointer. Unlike `hover` it only changes when the
+    /// pointer crosses into another group, so its outline isn't redrawn on
+    /// every move.
+    private(set) var hoverGroup: Int?
     var selectedGroup: Int?
 
     private var data: GeoData?
@@ -104,6 +110,12 @@ final class MapModel {
     private var nightMinute = -1
     private var clock: Timer?
     private var folding: Folding?
+    /// The folded frame being built off the main thread, if any.
+    private var foldTask: Task<Void, Never>?
+    /// The fold or its inputs changed while a frame was being built.
+    private var foldIsStale = false
+    /// Group outlines for the current map, built on first use.
+    @ObservationIgnored private var outlines: [Int: Path] = [:]
     /// `-unfold 0.4` on the command line starts partly folded.
     private var launchUnfold = UserDefaults.standard.string(forKey: "unfold").flatMap(Double.init)
     private var foldTimer: Timer?
@@ -159,7 +171,7 @@ final class MapModel {
                     let base = try cached ?? MeshOverlay(kind: configuration.mesh, data: data)
                     let map = MyriaMap(base: base, data: data, configuration: configuration)
                     let layers = map.scene(options).paths.map(LayerPath.init)
-                    return (map, layers, map.groupColorSlots(slotCount: MapStyle.slotCount))
+                    return (map, layers, map.colorSlots)
                 } catch {
                     return nil
                 }
@@ -174,6 +186,7 @@ final class MapModel {
             self.map = map
             mapVersion += 1
             folding = nil
+            outlines = [:]
             // Colours or layers may have changed while the map was building.
             staticLayers = options == sceneOptions() ? layers : map.scene(sceneOptions()).paths.map(LayerPath.init)
             colorSlots = slots
@@ -212,15 +225,37 @@ final class MapModel {
         refreshFolded()
     }
 
+    /// Builds the folded layers off the main thread, one frame at a time.
+    /// Changes made meanwhile are picked up when the frame is done, so the
+    /// slider and the animation never queue up work or block the window.
     private func refreshFolded() {
         guard let map, unfold < 1 else {
             foldedLayers = []
             return
         }
-        if folding == nil { folding = map.folding() }
+        guard foldTask == nil else {
+            foldIsStale = true
+            return
+        }
+        let cached = folding, unfold = unfold, version = mapVersion
         var options = SceneOptions(date: date, style: style)
         options.showLand = display.land
-        foldedLayers = map.foldedScene(unfold: unfold, folding: folding!, options: options).paths.map(LayerPath.init)
+        foldTask = Task {
+            let (folding, layers) = await Task.detached(priority: .userInitiated) { [options] in
+                let folding = cached ?? map.folding()
+                return (folding, map.foldedScene(unfold: unfold, folding: folding, options: options).paths.map(LayerPath.init))
+            }.value
+            foldTask = nil
+            // A frame for a map that has since been rebuilt is dropped.
+            if version == mapVersion {
+                self.folding = folding
+                if self.unfold < 1 { foldedLayers = layers }
+            }
+            if foldIsStale {
+                foldIsStale = false
+                refreshFolded()
+            }
+        }
     }
 
     /// Animates from the globe to the flat map (or back when already flat).
@@ -259,6 +294,17 @@ final class MapModel {
     func labels() -> [SceneText] {
         guard let map, display.labels else { return [] }
         return map.labelTexts(SceneOptions(date: date, style: style))
+    }
+
+    /// The outline of a zone group in map coordinates.
+    func outline(ofGroup g: Int) -> Path? {
+        guard let map else { return nil }
+        if let path = outlines[g] { return path }
+        let path = Path { p in
+            for line in map.outline(ofGroup: g) { p.addLines(line.map { CGPoint(x: $0.x, y: $0.y) }) }
+        }
+        outlines[g] = path
+        return path
     }
 
     func zoneColor(group: Int) -> Color {

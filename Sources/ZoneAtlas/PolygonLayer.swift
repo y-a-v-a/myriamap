@@ -41,16 +41,16 @@ public struct PolygonLayer: Sendable {
                     let ccw = Planar.signedArea(planar) > 0
                     return (i == 0) == ccw ? planar : planar.reversed()
                 }
-                guard let outer = rings.first else { continue }
-                let bounds = Rect2(bounding: outer)
-                for tile in grid.tiles(overlapping: bounds) {
+                guard !rings.isEmpty else { continue }
+                // Once per ring, not per tile: a continent spans hundreds of tiles.
+                let ringBounds = rings.map { Rect2(bounding: $0) }
+                for tile in grid.tiles(overlapping: ringBounds[0]) {
                     let rect = grid.rect(tile)
                     let clipBox = [Vec2(rect.minX, rect.minY), Vec2(rect.maxX, rect.minY),
                                    Vec2(rect.maxX, rect.maxY), Vec2(rect.minX, rect.maxY)]
                     var clipped: [[Vec2]] = []
                     for (i, ring) in rings.enumerated() {
-                        let r = Rect2(bounding: ring)
-                        guard r.intersects(rect) else { continue }
+                        guard ringBounds[i].intersects(rect) else { continue }
                         let c = GeoPolygon.densify(Planar.clip(ring, toConvex: clipBox), maxStep: Self.maxEdgeDegrees)
                         guard abs(Planar.signedArea(c)) > 1e-12 else {
                             if i == 0 { break } else { continue }

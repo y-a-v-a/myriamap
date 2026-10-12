@@ -5,7 +5,7 @@ import MyriaGeometry
 import ZoneAtlas
 @testable import Myriamap
 
-/// Bundled data and a coarse map, shared by the tests (loading takes ~1 s).
+/// Bundled data and a coarse map, shared by the tests.
 enum Fixture {
     static let data = try! GeoData.bundled()
     static let date = ISO8601DateFormatter().date(from: "2026-10-12T12:00:00Z")!
@@ -209,6 +209,28 @@ struct RenderingTests {
         #expect(svg.contains("class=\"zone\""))
         let doc = try XMLDocument(xmlString: svg)
         #expect(doc.rootElement()?.name == "svg")
+    }
+
+    @Test func svgNumbersMatchPrintf() {
+        func printf(_ v: Double, _ digits: Int) -> String {
+            var t = String(format: "%.\(digits)f", v)
+            guard t.contains(".") else { return t }
+            while t.hasSuffix("0") { t.removeLast() }
+            if t.hasSuffix(".") { t.removeLast() }
+            return t == "-0" ? "0" : t
+        }
+        // Ties (0.25, 0.125, 2.5), values just off them, negatives, zeros.
+        var values = [0, -0.0, 0.04, -0.04, 0.05, -0.05, 0.15, 0.25, -0.25, 0.125, 2.5, 1e6 + 0.05, 1234.5678]
+        var x = 0.000_123
+        while x < 5000 {
+            values += [x, -x]
+            x *= 1.0137
+        }
+        for v in values {
+            for digits in 1...3 {
+                #expect(SVGRenderer.number(v, digits: digits) == printf(v, digits), "\(v) with \(digits) digits")
+            }
+        }
     }
 
     @Test func pngHasTheRequestedSize() throws {

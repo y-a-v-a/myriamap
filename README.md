@@ -157,7 +157,7 @@ Overlaps:        542 faces, 0.197% of the map area
 Build time:      0.14s
 ```
 
-Building a map takes about 0.15 s after the ~1 s data load.
+Building a map takes about 0.15 s after the ~0.1 s data load.
 
 ## Tests
 
@@ -165,7 +165,7 @@ Building a map takes about 0.15 s after the ~1 s data load.
 swift test
 ```
 
-86 tests (Swift Testing) cover the following:
+87 tests (Swift Testing) cover the following:
 
 - **Geometry:** Euler characteristic and planarity of the meshes, the spanning tree, hinge
   coincidence and rigidity of the unfolding (cut count = V − 1), point
