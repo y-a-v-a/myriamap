@@ -125,7 +125,7 @@ struct TimeScrubber: View {
         HStack(spacing: 6) {
             Image(systemName: "clock")
                 .foregroundStyle(.secondary)
-            Slider(value: $model.timeOffset, in: -86_400...86_400, step: 900)
+            Slider(value: $model.timeOffset.snapped(to: 900), in: -86_400...86_400)
                 .frame(width: 160)
                 .help("Scrub through time to watch day and night move")
             Text(offsetText)
@@ -134,6 +134,8 @@ struct TimeScrubber: View {
             Button("Now") { model.timeOffset = 0 }
                 .disabled(model.timeOffset == 0)
         }
+        // Keeps the icon clear of the toolbar's rounded glass background.
+        .padding(.horizontal, 8)
     }
 
     private var offsetText: String {
@@ -164,7 +166,7 @@ struct SettingsPanel: View {
                 .disabled(model.cuts != .timezones)
                 VStack(alignment: .leading) {
                     Text("Centre longitude: \(Int(model.centerLongitude))°")
-                    Slider(value: $model.centerLongitude, in: -180...180, step: 5) { editing in
+                    Slider(value: $model.centerLongitude.snapped(to: 5), in: -180...180) { editing in
                         if !editing { model.rebuild() }
                     }
                 }
@@ -198,5 +200,14 @@ struct SettingsPanel: View {
             }
         }
         .formStyle(.grouped)
+    }
+}
+
+extension Binding where Value == Double {
+    /// Rounds values set through the binding to multiples of `step`.
+    /// Sliders use this instead of `step:`, which on macOS draws a tick mark
+    /// per step and turns into a dashed line under the track.
+    func snapped(to step: Double) -> Binding<Double> {
+        Binding(get: { wrappedValue }, set: { wrappedValue = ($0 / step).rounded() * step })
     }
 }
