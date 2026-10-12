@@ -89,7 +89,7 @@ Things to know:
 
 A SwiftUI macOS app (macOS 14+):
 
-- the unfolded map with pinch, drag and double-click zoom
+- the unfolded map with pinch, ⌘-scroll, drag and double-click zoom
 - hover cards with local time, abbreviation, UTC offset and coordinates; click to select a zone
 - a sidebar of every zone's live clock, sorted by offset, marking "yesterday" and "tomorrow"
 - a time scrubber (±24 h) to watch day and night move

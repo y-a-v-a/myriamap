@@ -1,10 +1,11 @@
+import AppKit
 import MyriaGeometry
 import Myriamap
 import SwiftUI
 import ZoneAtlas
 
 /// The unfolded map: static layers, day/night, live clocks, hover and
-/// selection, with pinch/drag/double-click navigation.
+/// selection, with pinch/⌘-scroll/drag/double-click navigation.
 struct MapCanvas: View {
     @Bindable var model: MapModel
     @State private var viewport: Viewport?
@@ -72,6 +73,15 @@ struct MapCanvas: View {
                     }
                     .onEnded { _ in pinchStart = nil }
             )
+            .background {
+                CommandScrollReader { steps, location in
+                    // Read the viewport afresh: scroll events can arrive
+                    // faster than the view updates.
+                    var v = currentViewport(size: size)
+                    v.zoom(by: pow(2, steps), around: Vec2(location.x, location.y))
+                    viewport = v
+                }
+            }
             .overlay(alignment: .bottomLeading) {
                 FoldControl(model: model).padding(12)
             }
@@ -231,11 +241,11 @@ struct ZoomControls: View {
     var body: some View {
         HStack(spacing: 0) {
             Button(action: zoomOut) { Image(systemName: "minus.magnifyingglass") }
-                .help("Zoom out")
+                .help("Zoom out (or ⌘-scroll)")
             Button(action: reset) { Image(systemName: "arrow.up.left.and.down.right.magnifyingglass") }
                 .help("Show the whole map")
             Button(action: zoomIn) { Image(systemName: "plus.magnifyingglass") }
-                .help("Zoom in")
+                .help("Zoom in (or ⌘-scroll)")
         }
         .buttonStyle(.borderless)
         .padding(6)
@@ -264,5 +274,49 @@ struct FoldControl: View {
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
         .background(.regularMaterial, in: Capsule())
+    }
+}
+
+/// Reports scrolling over the view while ⌘ is held, and keeps it from
+/// scrolling anything else. Other scrolling and all clicks pass through.
+struct CommandScrollReader: NSViewRepresentable {
+    /// Zoom steps (positive: in, one step doubles) and the pointer
+    /// position, top-left origin.
+    var onScroll: (_ steps: Double, _ location: CGPoint) -> Void
+
+    func makeNSView(context: Context) -> ScrollMonitorView { ScrollMonitorView() }
+
+    func updateNSView(_ view: ScrollMonitorView, context: Context) { view.onScroll = onScroll }
+
+    final class ScrollMonitorView: NSView {
+        var onScroll: ((Double, CGPoint) -> Void)?
+        private var monitor: Any?
+
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            if let monitor { NSEvent.removeMonitor(monitor) }
+            monitor = nil
+            guard window != nil else { return }
+            monitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
+                guard let self, let window, event.modifierFlags.contains(.command),
+                      event.window == nil || event.window === window
+                else { return event }
+                // Events posted straight to the app (automation, remote
+                // control) carry no window and a screen position.
+                let inWindow = event.window == nil
+                    ? window.convertPoint(fromScreen: event.locationInWindow) : event.locationInWindow
+                let p = convert(inWindow, from: nil)
+                guard bounds.contains(p) else { return event }
+                // Rolling the wheel or swiping away from you zooms in, whatever
+                // the scroll direction setting. A wheel notch is a line, a
+                // trackpad reports points.
+                let away = event.isDirectionInvertedFromDevice ? -event.scrollingDeltaY : event.scrollingDeltaY
+                let steps = away / (event.hasPreciseScrollingDeltas ? 100 : 4)
+                onScroll?(steps, CGPoint(x: p.x, y: isFlipped ? p.y : bounds.height - p.y))
+                return nil
+            }
+        }
     }
 }
