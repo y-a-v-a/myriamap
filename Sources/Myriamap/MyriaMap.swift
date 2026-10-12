@@ -262,7 +262,11 @@ public struct MyriaMap: Sendable {
                     regionArea[fill.region, default: 0] += fill.area
                 }
             }
-            let region = regionArea.max { $0.value < $1.value }?.key ?? grouping.groups[g].primaryRegion
+            // Name the region under the label; when a group spans several
+            // regions (offset grouping) that keeps the name and place together.
+            let under = overlay.dominantRegion(of: center)
+            let region = under >= 0 && grouping.groupOfRegion[under] == g
+                ? under : (regionArea.max { $0.value < $1.value }?.key ?? grouping.groups[g].primaryRegion)
             let position = Planar.centroid(projection.mapPolygons[center])
             return GroupLabel(group: g, region: region, position: position,
                               room: (Double(d) + 0.5) * typicalEdge, area: area)

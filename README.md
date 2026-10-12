@@ -145,7 +145,7 @@ Building a map takes about 0.15 s after the ~1 s data load.
 swift test
 ```
 
-77 tests (Swift Testing) cover the following:
+78 tests (Swift Testing) cover the following:
 
 - **Geometry:** Euler characteristic and planarity of the meshes, the spanning tree, hinge
   coincidence and rigidity of the unfolding (cut count = V − 1), point

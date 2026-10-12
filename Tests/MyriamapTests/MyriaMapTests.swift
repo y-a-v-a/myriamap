@@ -137,6 +137,20 @@ struct MyriaMapTests {
         #expect(map.labels.count <= grouping.groups.count)
     }
 
+    @Test func offsetGroupLabelsNameTheRegionBeneathThem() throws {
+        let map = MyriaMap(base: Fixture.base, data: Fixture.data, configuration: MapConfiguration(
+            mesh: .graticule(step: 3.75), grouping: .utcOffset,
+            referenceDate: ISO8601DateFormatter().date(from: "2026-07-01T12:00:00Z")!))
+        var matches = 0, total = 0
+        for label in map.labels where label.room > 0.08 {
+            let hit = try #require(map.region(atMapPoint: label.position))
+            total += 1
+            if hit.region.id == label.region { matches += 1 }
+        }
+        #expect(total > 10)
+        #expect(Double(matches) / Double(total) > 0.9)
+    }
+
     @Test func landmassCutsBuildToo() {
         let map = MyriaMap(base: Fixture.base, data: Fixture.data, configuration: MapConfiguration(
             mesh: .graticule(step: 3.75), cuts: .landmass, referenceDate: Fixture.date))
