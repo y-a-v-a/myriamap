@@ -123,22 +123,7 @@ extension MyriaMap {
         }
 
         if options.showNight {
-            let sun = SolarPosition.sunDirection(at: options.date)
-            // Night, then civil, nautical and astronomical darkness stacked.
-            for depression in [0.0, 6, 12, 18] {
-                let threshold = -sin(depression * .pi / 180)
-                var rings: [[Vec2]] = []
-                for f in 0..<mesh.faceCount {
-                    let frame = mesh.frames[f]
-                    let local = frame.localVertices
-                    let values = local.map { threshold - frame.spherePoint($0).dot(sun) }
-                    if values.allSatisfy({ $0 < 0 }) { continue }
-                    let dark = values.allSatisfy { $0 >= 0 } ? local : Planar.clip(local, values: values)
-                    if dark.count >= 3 { rings.append(mapped(dark, f)) }
-                }
-                paths.append(ScenePath(role: .night, subpaths: rings, closed: true, fill: style.night,
-                                       stroke: nil, lineWidth: 0))
-            }
+            paths += nightLayers(date: options.date, style: style)
         }
 
         if options.showCoastlines {
@@ -202,7 +187,27 @@ extension MyriaMap {
         return lines
     }
 
-    func labelTexts(_ options: SceneOptions) -> [SceneText] {
+    /// Day/night shading: the night side, then civil, nautical and
+    /// astronomical darkness stacked on top of each other.
+    public func nightLayers(date: Date, style: MapStyle) -> [ScenePath] {
+        let sun = SolarPosition.sunDirection(at: date)
+        return [0.0, 6, 12, 18].map { depression in
+            let threshold = -sin(depression * .pi / 180)
+            var rings: [[Vec2]] = []
+            for f in 0..<mesh.faceCount {
+                let frame = mesh.frames[f]
+                let local = frame.localVertices
+                let values = local.map { threshold - frame.spherePoint($0).dot(sun) }
+                if values.allSatisfy({ $0 < 0 }) { continue }
+                let dark = values.allSatisfy { $0 >= 0 } ? local : Planar.clip(local, values: values)
+                if dark.count >= 3 { rings.append(dark.map(projection.unfolding.transforms[f].apply)) }
+            }
+            return ScenePath(role: .night, subpaths: rings, closed: true, fill: style.night, stroke: nil, lineWidth: 0)
+        }
+    }
+
+    /// Clock labels: time, place and UTC offset for every labelled piece.
+    public func labelTexts(_ options: SceneOptions) -> [SceneText] {
         let style = options.style
         var texts: [SceneText] = []
         for label in labels where label.room >= options.minimumLabelRoom {

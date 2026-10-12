@@ -212,3 +212,36 @@ struct RenderingTests {
         #expect(m.apply(Vec2(0, 1)).y < m.apply(Vec2(0, -1)).y)
     }
 }
+
+@Suite("Viewport")
+struct ViewportTests {
+    let bounds = Rect2(minX: -3, minY: -1.5, maxX: 3, maxY: 1.5)
+
+    @Test func fitsAndRoundTrips() {
+        let v = Viewport(bounds: bounds, size: Vec2(624, 400), margin: 12)
+        #expect(abs(v.scale - 100) < 1e-9)
+        let p = Vec2(1.5, -0.25)
+        #expect((v.toMap(v.toView(p)) - p).length < 1e-12)
+        #expect((v.toView(bounds.center) - Vec2(312, 200)).length < 1e-9)
+        #expect(v.toView(Vec2(0, 1)).y < v.toView(Vec2(0, -1)).y)
+    }
+
+    @Test func zoomKeepsTheAnchorFixed() {
+        var v = Viewport(bounds: bounds, size: Vec2(624, 400))
+        let anchor = Vec2(500, 120)
+        let before = v.toMap(anchor)
+        v.zoom(by: 3, around: anchor)
+        #expect(abs(v.zoom - 3) < 1e-12)
+        #expect((v.toMap(anchor) - before).length < 1e-9)
+        v.zoom(by: 0.01, around: anchor)
+        #expect(v.zoom == 1)
+    }
+
+    @Test func panMovesWithTheDrag() {
+        var v = Viewport(bounds: bounds, size: Vec2(624, 400), zoom: 2)
+        let p = Vec2(0.5, 0.5)
+        let before = v.toView(p)
+        v.pan(by: Vec2(30, -10))
+        #expect((v.toView(p) - (before + Vec2(30, -10))).length < 1e-9)
+    }
+}

@@ -9,6 +9,7 @@ let package = Package(
         .library(name: "ZoneAtlas", targets: ["ZoneAtlas"]),
         .library(name: "Myriamap", targets: ["Myriamap"]),
         .executable(name: "myriamap", targets: ["MyriamapCLI"]),
+        .executable(name: "MyriamapApp", targets: ["MyriamapApp"]),
     ],
     dependencies: [
         .package(url: "https://github.com/apple/swift-argument-parser", from: "1.5.0"),
@@ -25,6 +26,7 @@ let package = Package(
             name: "MyriamapCLI",
             dependencies: ["Myriamap", .product(name: "ArgumentParser", package: "swift-argument-parser")]
         ),
+        .executableTarget(name: "MyriamapApp", dependencies: ["Myriamap"]),
         .testTarget(name: "MyriaGeometryTests", dependencies: ["MyriaGeometry"]),
         .testTarget(name: "ZoneAtlasTests", dependencies: ["ZoneAtlas"]),
         .testTarget(name: "MyriamapTests", dependencies: ["Myriamap"]),

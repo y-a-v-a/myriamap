@@ -71,10 +71,10 @@ public struct MapStyle: Hashable, Sendable {
         primaryInk: RGBA(hex: "#f0efec"), secondaryInk: RGBA(hex: "#c3c2b7"), mutedInk: RGBA(hex: "#898781"),
         zoneSlots: ["#3987e5", "#d95926", "#199e70", "#c98500", "#d55181", "#9085e9", "#008300", "#e66767"]
             .map { RGBA(hex: $0) },
-        zoneTint: 0.55,
-        land: RGBA(hex: "#f0efec", alpha: 0.14), coastline: RGBA(hex: "#c3c2b7", alpha: 0.6),
+        zoneTint: 0.38,
+        land: RGBA(hex: "#0d0d0d", alpha: 0.28), coastline: RGBA(hex: "#f0efec", alpha: 0.45),
         border: RGBA(hex: "#1a1a19", alpha: 0.95), cut: RGBA(hex: "#898781", alpha: 0.9),
-        mesh: RGBA(hex: "#f0efec", alpha: 0.08), night: RGBA(hex: "#000000", alpha: 0.16),
+        mesh: RGBA(hex: "#f0efec", alpha: 0.08), night: RGBA(hex: "#000000", alpha: 0.2),
         highlight: RGBA(hex: "#f0efec", alpha: 0.85))
 
     public func zoneColor(slot: Int) -> RGBA {
