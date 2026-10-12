@@ -36,8 +36,12 @@ if [[ ! -f "$land_raw" ]]; then
     "https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_50m_land.geojson"
 fi
 
+# The source has overlapping polygons in disputed areas (e.g. Asia/Urumqi
+# over Xinjiang); -clean hands each overlap to the larger zone so every
+# point on Earth belongs to exactly one region.
 $MAPSHAPER -i "$RAW/tbb/combined-with-oceans-now.json" \
   -simplify "$ZONES_KEEP" keep-shapes \
+  -clean overlap-rule=max-area \
   -filter-fields tzid \
   -o precision=0.0001 format=geojson "$OUT/timezones.geojson"
 
@@ -47,5 +51,6 @@ $MAPSHAPER -i "$land_raw" \
   -o precision=0.001 format=geojson "$OUT/land.geojson"
 
 echo "tbb release $TBB_RELEASE" > "$OUT/SOURCES.txt"
-echo "zones simplified to $ZONES_KEEP, land (Natural Earth 50m) to $LAND_KEEP" >> "$OUT/SOURCES.txt"
+echo "zones simplified to $ZONES_KEEP and cleaned (overlaps to the larger zone)," >> "$OUT/SOURCES.txt"
+echo "land (Natural Earth 50m) simplified to $LAND_KEEP" >> "$OUT/SOURCES.txt"
 ls -la "$OUT"

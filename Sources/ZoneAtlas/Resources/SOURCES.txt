@@ -1,2 +1,3 @@
 tbb release 2026e
-zones simplified to 1%, land (Natural Earth 50m) to 40%
+zones simplified to 1% and cleaned (overlaps to the larger zone),
+land (Natural Earth 50m) simplified to 40%
