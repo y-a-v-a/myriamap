@@ -28,5 +28,8 @@ struct MyriamapApp: App {
                     .keyboardShortcut("k", modifiers: [.command, .option])
             }
         }
+        Settings {
+            SettingsView(model: model)
+        }
     }
 }

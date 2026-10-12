@@ -94,8 +94,11 @@ A SwiftUI macOS app (macOS 14+):
 - a sidebar of every zone's live clock, sorted by offset, marking "yesterday" and "tomorrow"
 - a time scrubber (±24 h) to watch day and night move
 - a fold slider and a globe ⇄ map animation
-- settings for the mesh, cut mode, border grouping, centre longitude and layers
-- SVG/PNG export
+- an inspector for the mesh, cut mode, border grouping, centre longitude and layers
+- a Settings window (⌘,) for the appearance (system, light or dark) and the colour scheme
+- SVG/PNG export, in the chosen colours
+
+![The Settings window](docs/settings.png)
 
 ```sh
 swift run MyriamapApp            # run straight from the package
@@ -103,12 +106,29 @@ swift run MyriamapApp            # run straight from the package
 open dist/Myriamap.app
 ```
 
+### Colour schemes
+
+Each scheme has a light and a dark variant: **Standard** (clear, distinct
+hues), **Atlas** (muted inks on paper, like a printed atlas) and
+**Blueprint** (shades of blue with pale linework). Top row light, bottom
+row dark:
+
+![Standard, Atlas and Blueprint, light and dark](docs/themes.png)
+
+The schemes were tuned against the map as it is drawn, not as swatches.
+Zone fills are tinted towards the surface, with land and up to three
+night layers on top. The tests check that the clock, place and offset
+inks keep 4.5:1, 4:1 and 3:1 contrast over every one of those
+backgrounds, and that any two zone fills stay apart (OKLab distance ≥ 5,
+since any two can end up neighbours).
+
 ## The command-line tool
 
 ```sh
 swift build -c release
 .build/release/myriamap render -o map.svg                    # now, light palette
 .build/release/myriamap render -o map.png --dark --width 3200
+.build/release/myriamap render --theme atlas -o atlas.png      # standard, atlas or blueprint
 .build/release/myriamap render --mesh geodesic:40 --center -90 -o americas.svg
 .build/release/myriamap render --grouping utcOffset --date 2026-07-01T12:00:00Z -o summer.png
 .build/release/myriamap render --unfold 0.4 -o half-folded.png
@@ -145,7 +165,7 @@ Building a map takes about 0.15 s after the ~1 s data load.
 swift test
 ```
 
-78 tests (Swift Testing) cover the following:
+86 tests (Swift Testing) cover the following:
 
 - **Geometry:** Euler characteristic and planarity of the meshes, the spanning tree, hinge
   coincidence and rigidity of the unfolding (cut count = V − 1), point
@@ -159,6 +179,9 @@ swift test
   parallels), overlay coverage of every face, labels on the right region,
   Auckland's clock on New Zealand, overlap below 1 %, graph colouring of
   neighbours, night covering half the globe, and the SVG, PNG and GIF output.
+- **Colour:** WCAG contrast and OKLab distance against reference values,
+  label legibility and distinct fills in every scheme and variant, and
+  scenes painted in the chosen scheme.
 
 ## Layout
 
@@ -166,7 +189,7 @@ swift test
 |---|---|
 | `Sources/MyriaGeometry` | vectors, polyhedra, topology, spanning trees, unfolding, folding, point location, clipping |
 | `Sources/ZoneAtlas` | GeoJSON, tiled polygon/segment layers, timezone regions and clocks, subsolar point, bundled data |
-| `Sources/Myriamap` | face overlay, cut strategies, map builder, labels, scenes, SVG/PNG/GIF renderers, viewport |
+| `Sources/Myriamap` | face overlay, cut strategies, map builder, labels, colour themes, scenes, SVG/PNG/GIF renderers, viewport |
 | `Sources/MyriamapCLI` | the `myriamap` command |
 | `Sources/MyriamapApp` | the SwiftUI app |
 | `scripts/prepare-data.sh` | downloads and simplifies the data (needs `npx`, uses mapshaper) |

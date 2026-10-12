@@ -189,6 +189,13 @@ struct SettingsPanel: View {
                 Toggle("Cut edges", isOn: $model.display.cuts)
                 Toggle("Faces", isOn: $model.display.mesh)
             }
+            Section("Colours") {
+                LabeledContent("Scheme", value: model.theme.title)
+                SettingsLink {
+                    Text("Appearance and Colours…")
+                }
+                .help("Choose light or dark and the colour scheme (⌘,)")
+            }
             if model.isBuilding {
                 Section { ProgressView().controlSize(.small) }
             }

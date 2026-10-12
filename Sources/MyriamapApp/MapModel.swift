@@ -60,7 +60,24 @@ final class MapModel {
     var grouping: CutGrouping = .region { didSet { if grouping != oldValue { rebuild() } } }
     var centerLongitude: Double = 10
     var display = DisplayOptions() { didSet { if display != oldValue { refreshLayers() } } }
+    /// Whether the window is dark; follows the effective appearance.
     var dark = false { didSet { if dark != oldValue { refreshLayers() } } }
+    /// The map's colour scheme (Settings, saved).
+    var theme = MapModel.stored(MapTheme.self, key: "theme") ?? .standard {
+        didSet {
+            guard theme != oldValue else { return }
+            UserDefaults.standard.set(theme.rawValue, forKey: "theme")
+            refreshLayers()
+        }
+    }
+    /// Light, dark or following the system (Settings, saved).
+    var appearance = MapModel.stored(AppearanceMode.self, key: "appearance") ?? .system {
+        didSet {
+            guard appearance != oldValue else { return }
+            UserDefaults.standard.set(appearance.rawValue, forKey: "appearance")
+            NSApplication.shared.appearance = appearance.nsAppearance
+        }
+    }
     /// Offset from the real clock, for scrubbing through the day.
     var timeOffset: TimeInterval = 0 { didSet { refreshNight() } }
     var now = Date()
@@ -69,6 +86,8 @@ final class MapModel {
 
     // Outputs.
     private(set) var map: MyriaMap?
+    /// Counts finished builds, so views can tell when the map changed.
+    private(set) var mapVersion = 0
     private(set) var staticLayers: [LayerPath] = []
     private(set) var nightLayers: [LayerPath] = []
     private(set) var foldedLayers: [LayerPath] = []
@@ -90,7 +109,17 @@ final class MapModel {
     private var foldTimer: Timer?
 
     var date: Date { now.addingTimeInterval(timeOffset) }
-    var style: MapStyle { dark ? .dark : .light }
+    var style: MapStyle { theme.style(dark: dark) }
+
+    init() {
+        NSApplication.shared.appearance = appearance.nsAppearance
+    }
+
+    /// A saved setting (also settable for one launch: `-theme atlas`).
+    nonisolated private static func stored<T: RawRepresentable<String>>(_: T.Type, key: String) -> T? {
+        guard let raw = UserDefaults.standard.string(forKey: key) else { return nil }
+        return T(rawValue: raw)
+    }
 
     func start() {
         guard data == nil, buildTask == nil else { return }
@@ -130,7 +159,7 @@ final class MapModel {
                     let base = try cached ?? MeshOverlay(kind: configuration.mesh, data: data)
                     let map = MyriaMap(base: base, data: data, configuration: configuration)
                     let layers = map.scene(options).paths.map(LayerPath.init)
-                    return (map, layers, map.groupColorSlots(slotCount: 5))
+                    return (map, layers, map.groupColorSlots(slotCount: MapStyle.slotCount))
                 } catch {
                     return nil
                 }
@@ -143,8 +172,10 @@ final class MapModel {
             }
             overlays[configuration.mesh] = map.base
             self.map = map
+            mapVersion += 1
             folding = nil
-            staticLayers = layers
+            // Colours or layers may have changed while the map was building.
+            staticLayers = options == sceneOptions() ? layers : map.scene(sceneOptions()).paths.map(LayerPath.init)
             colorSlots = slots
             selectedGroup = nil
             hover = nil
@@ -159,9 +190,10 @@ final class MapModel {
         }
     }
 
-    /// Scene options for the static layers (everything but night and labels).
+    /// Scene options for the static layers (everything but night and labels,
+    /// so the date doesn't matter and is fixed).
     private func sceneOptions() -> SceneOptions {
-        var options = SceneOptions(date: date, style: style)
+        var options = SceneOptions(date: .distantPast, style: style)
         options.showNight = false
         options.showLabels = false
         options.showLand = display.land
@@ -242,6 +274,24 @@ final class MapModel {
         }
         hover = HoverInfo(region: hit.region, location: hit.location,
                           group: map.grouping.groupOfRegion[hit.region.id], viewPoint: viewPoint)
+    }
+
+    /// The map drawn in every theme, for the previews in Settings.
+    func themePreviews(dark: Bool, width: Int) async -> [MapTheme: CGImage] {
+        guard let map else { return [:] }
+        return await Task.detached(priority: .utility) {
+            var previews: [MapTheme: CGImage] = [:]
+            for theme in MapTheme.allCases {
+                // Fills only, in daylight: at this size lines turn into speckles.
+                var options = SceneOptions(style: theme.style(dark: dark))
+                options.showLabels = false
+                options.showNight = false
+                options.showCoastlines = false
+                options.showBorders = false
+                previews[theme] = try? BitmapRenderer.image(map.scene(options), width: width)
+            }
+            return previews
+        }.value
     }
 
     /// Writes the current view of the map as SVG or PNG.
