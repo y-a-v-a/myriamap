@@ -77,8 +77,11 @@ struct Render: ParsableCommand {
     @Option(help: "Output width in pixels.")
     var width: Int = 2400
 
-    @Flag(help: "Use the dark palette.")
+    @Flag(help: "Use the theme's dark variant.")
     var dark = false
+
+    @Option(help: "Colour scheme.")
+    var theme: MapTheme = .standard
 
     @Flag(help: "Omit the day/night shading.")
     var noNight = false
@@ -108,7 +111,7 @@ struct Render: ParsableCommand {
         let built = timed("cut + unfold", verbose: verbose) {
             MyriaMap(base: base, data: data, configuration: configuration)
         }
-        var options = SceneOptions(date: configuration.referenceDate, style: dark ? .dark : .light)
+        var options = SceneOptions(date: configuration.referenceDate, style: theme.style(dark: dark))
         options.showNight = !noNight
         options.showLabels = !noLabels
         options.showCuts = showCuts
@@ -148,14 +151,17 @@ struct Animate: ParsableCommand {
     @Option(help: "Frames for the unfolding.")
     var frames: Int = 40
 
-    @Flag(help: "Use the dark palette.")
+    @Flag(help: "Use the theme's dark variant.")
     var dark = false
+
+    @Option(help: "Colour scheme.")
+    var theme: MapTheme = .standard
 
     func run() throws {
         let configuration = try map.configuration()
         let built = try MyriaMap(data: try GeoData.bundled(), configuration: configuration)
         let folding = built.folding()
-        let options = SceneOptions(date: configuration.referenceDate, style: dark ? .dark : .light)
+        let options = SceneOptions(date: configuration.referenceDate, style: theme.style(dark: dark))
         var scenes: [MapScene] = []
         var delays: [Double] = []
         for i in 0...frames {
@@ -255,3 +261,5 @@ struct Stats: ParsableCommand {
         print(String(format: "Build time:      %.2fs", elapsed))
     }
 }
+
+extension MapTheme: ExpressibleByArgument {}

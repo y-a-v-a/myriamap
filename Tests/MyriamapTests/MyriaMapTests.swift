@@ -185,7 +185,7 @@ struct RenderingTests {
 
     @Test func neighbouringZonesGetDifferentColours() {
         let map = Fixture.map
-        let slots = map.groupColorSlots(slotCount: 5)
+        let slots = map.groupColorSlots(slotCount: MapStyle.slotCount)
         for edge in map.mesh.topology.edges {
             let a = map.faceGroups[edge.leftFace], b = map.faceGroups[edge.rightFace]
             if a >= 0, b >= 0, a != b { #expect(slots[a] != slots[b]) }

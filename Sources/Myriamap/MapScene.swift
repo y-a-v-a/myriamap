@@ -98,7 +98,7 @@ extension MyriaMap {
         func mapped(_ ring: [Vec2], _ f: Int) -> [Vec2] { ring.map(transforms[f].apply) }
 
         var paths: [ScenePath] = []
-        let slots = groupColorSlots(slotCount: 5)
+        let slots = groupColorSlots(slotCount: MapStyle.slotCount)
 
         // Zone fills, one path per group.
         var zoneRings = Array(repeating: [[Vec2]](), count: grouping.groups.count)

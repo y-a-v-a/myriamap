@@ -23,12 +23,8 @@ extension MyriaMap {
         // globe stays centred on the map's origin.
         let pivot = Vec3(0, 0, -closed)
         let camera = Pose3(rotation: tiltRotation, translation: pivot - tiltRotation.apply(pivot))
-        let slots = groupColorSlots(slotCount: 5)
+        let slots = groupColorSlots(slotCount: MapStyle.slotCount)
         let groupColor = slots.map { style.zoneColor(slot: $0) }
-        func over(_ top: RGBA, _ bottom: RGBA) -> RGBA {
-            RGBA(top.r * top.a + bottom.r * (1 - top.a), top.g * top.a + bottom.g * (1 - top.a),
-                 top.b * top.a + bottom.b * (1 - top.a))
-        }
         let shade = style.surface.mixed(with: RGBA(0, 0, 0), 0.6)
 
         let n = mesh.faceCount
@@ -59,7 +55,7 @@ extension MyriaMap {
                 batches[Key(bucket: bucket, layer: 0, color: color), default: []] += fill.rings.map { project($0, f) }
             }
             if options.showLand, !overlay.landFills[f].isEmpty, dominant >= 0 {
-                var color = over(style.land, groupColor[dominant])
+                var color = style.land.composited(over: groupColor[dominant])
                 if !facing[f] { color = color.mixed(with: shade, 0.55) }
                 batches[Key(bucket: bucket, layer: 1, color: color), default: []] += overlay.landFills[f].map { project($0, f) }
             }
