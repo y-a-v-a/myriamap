@@ -1,14 +1,23 @@
 #!/usr/bin/env bash
-# Builds the SwiftUI app in release mode and assembles dist/Myriamap.app.
+# Builds the SwiftUI app in release mode (universal: Apple silicon and Intel)
+# and assembles dist/Myriamap.app.
+#
+#   VERSION         CFBundleShortVersionString (default 1.0)
+#   SIGN_IDENTITY   codesign identity; "-" (the default) signs ad hoc, anything
+#                   else signs with the hardened runtime and a secure timestamp
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 APP="$ROOT/dist/Myriamap.app"
+VERSION="${VERSION:-1.0}"
+SIGN_IDENTITY="${SIGN_IDENTITY:--}"
+BUILD_NUMBER="$(git -C "$ROOT" rev-list --count HEAD 2>/dev/null || echo 1)"
+ARCHS=(--arch arm64 --arch x86_64)
 cd "$ROOT"
 
-swift build -c release --product MyriamapApp
-swift build -c release --product myriamap
-BIN="$(swift build -c release --show-bin-path)"
+swift build -c release "${ARCHS[@]}" --product MyriamapApp
+swift build -c release "${ARCHS[@]}" --product myriamap
+BIN="$(swift build -c release "${ARCHS[@]}" --show-bin-path)"
 
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
@@ -39,8 +48,8 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleIdentifier</key><string>app.myriamap.Myriamap</string>
   <key>CFBundleExecutable</key><string>Myriamap</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleShortVersionString</key><string>1.0</string>
-  <key>CFBundleVersion</key><string>1</string>
+  <key>CFBundleShortVersionString</key><string>$VERSION</string>
+  <key>CFBundleVersion</key><string>$BUILD_NUMBER</string>
   <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>LSMinimumSystemVersion</key><string>14.0</string>
   <key>LSApplicationCategoryType</key><string>public.app-category.reference</string>
@@ -50,5 +59,9 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
-codesign --force --sign - "$APP" >/dev/null
-echo "Built $APP"
+if [[ "$SIGN_IDENTITY" == "-" ]]; then
+  codesign --force --sign - "$APP"
+else
+  codesign --force --options runtime --timestamp --sign "$SIGN_IDENTITY" "$APP"
+fi
+echo "Built $APP ($VERSION, build $BUILD_NUMBER)"

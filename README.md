@@ -92,7 +92,9 @@ Things to know:
 
 ![The macOS app](docs/app.png)
 
-A SwiftUI macOS app (macOS 14+):
+A SwiftUI macOS app (macOS 14+, Apple silicon and Intel). Download it,
+signed and notarized, from the
+[latest release](https://github.com/y-a-v-a/myriamap/releases/latest).
 
 - the unfolded map, drawn with Metal at the display's frame rate, with pinch, ⌘-scroll, drag and double-click zoom
 - hover cards with local time, abbreviation, UTC offset and coordinates; click to select a zone
@@ -107,8 +109,9 @@ A SwiftUI macOS app (macOS 14+):
 
 ```sh
 swift run MyriamapApp            # run straight from the package
-./scripts/bundle-app.sh          # or build dist/Myriamap.app (release, signed ad hoc, with icon)
+./scripts/bundle-app.sh          # or build dist/Myriamap.app (release, universal, signed ad hoc, with icon)
 open dist/Myriamap.app
+./scripts/release.sh 1.0.0       # Developer ID signed, notarized ZIP published as a GitHub release
 ```
 
 ### Drawing on the GPU
@@ -241,6 +244,7 @@ swift test
 | `Sources/MyriamapApp` | the SwiftUI app |
 | `scripts/prepare-data.sh` | downloads and simplifies the data (needs `npx`, uses mapshaper) |
 | `scripts/bundle-app.sh` | assembles `dist/Myriamap.app` |
+| `scripts/release.sh` | signs, notarizes and zips the app and publishes a GitHub release (see the script for the notarytool profile) |
 
 ## Data and licences
 
