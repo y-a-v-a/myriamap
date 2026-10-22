@@ -65,6 +65,43 @@ struct FoldingTests {
         }
     }
 
+    @Test func largeMeshesArePosedInParallelBranches() {
+        // Big enough to split into a trunk and parallel branches.
+        let mesh = try! MyriahedralMesh(.geodesic(frequency: 16))
+        let map = mesh.unfold(weights: UnfoldingTests.pseudoRandomWeights(mesh.topology.edgeCount, seed: 3), root: 17)
+        let folding = Folding(projection: map)
+        #expect(!folding.branches.isEmpty)
+        // Every face exactly once, and every parent posed before its child.
+        let sequence = folding.trunk + folding.branches.flatMap { $0 }
+        #expect(sequence.sorted() == Array(0..<mesh.faceCount))
+        let trunk = Set(folding.trunk)
+        for branch in folding.branches {
+            var seen = Set<Int>()
+            for f in branch {
+                let p = folding.parent[f]
+                #expect(trunk.contains(p) || seen.contains(p))
+                seen.insert(f)
+            }
+        }
+        // The same poses as composing hinge and placement one face at a time.
+        let camera = Pose3(rotation: .rotation(axis: Vec3(1, 2, 3).normalized, angle: 0.3), translation: Vec3(0.1, -0.2, 0.3))
+        for unfold in [0.0, 0.37, 1.0] {
+            var poses: [Pose3] = []
+            folding.poses(unfold: unfold, camera: camera, into: &poses)
+            var expected = Array(repeating: camera, count: mesh.faceCount)
+            for f in folding.order where folding.parent[f] >= 0 {
+                let rotation = Mat3.rotation(axis: folding.hingeAxis[f], angle: folding.closingAngle[f] * (1 - unfold))
+                let hinge = Pose3(rotation: rotation, translation: folding.hingePoint[f] - rotation.apply(folding.hingePoint[f]))
+                expected[f] = expected[folding.parent[f]].concatenating(hinge).concatenating(folding.flat[f])
+            }
+            for f in 0..<mesh.faceCount {
+                let q = mesh.frames[f].localVertices[0]
+                #expect((poses[f].apply(q) - expected[f].apply(q)).length < 1e-9)
+                #expect((poses[f].rotation.c2 - expected[f].rotation.c2).length < 1e-9)
+            }
+        }
+    }
+
     @Test func matrixHelpers() {
         let r = Mat3.rotation(axis: .unitZ, angle: .pi / 2)
         #expect((r.apply(.unitX) - .unitY).length < 1e-12)

@@ -5,30 +5,6 @@ import Observation
 import SwiftUI
 import ZoneAtlas
 
-/// A scene path converted to a SwiftUI path in map coordinates.
-struct LayerPath: Sendable {
-    let role: ScenePath.Role
-    let path: Path
-    let fill: Color?
-    let stroke: Color?
-    let lineWidth: Double
-    let group: Int?
-
-    init(_ scenePath: ScenePath) {
-        role = scenePath.role
-        path = Path { p in
-            for sub in scenePath.subpaths where sub.count >= 2 {
-                p.addLines(sub.map { CGPoint(x: $0.x, y: $0.y) })
-                if scenePath.closed { p.closeSubpath() }
-            }
-        }
-        fill = scenePath.fill.map(Color.init)
-        stroke = scenePath.stroke.map(Color.init)
-        lineWidth = scenePath.lineWidth
-        group = scenePath.group
-    }
-}
-
 extension Color {
     init(_ c: RGBA) { self.init(.sRGB, red: c.r, green: c.g, blue: c.b, opacity: c.a) }
 }
@@ -59,15 +35,14 @@ final class MapModel {
     var cuts: MapConfiguration.Cuts = .timezones { didSet { if cuts != oldValue { rebuild() } } }
     var grouping: CutGrouping = .region { didSet { if grouping != oldValue { rebuild() } } }
     var centerLongitude: Double = 10
-    var display = DisplayOptions() { didSet { if display != oldValue { refreshLayers() } } }
+    var display = DisplayOptions()
     /// Whether the window is dark; follows the effective appearance.
-    var dark = false { didSet { if dark != oldValue { refreshLayers() } } }
+    var dark = false
     /// The map's colour scheme (Settings, saved).
     var theme = MapModel.stored(MapTheme.self, key: "theme") ?? .standard {
         didSet {
             guard theme != oldValue else { return }
             UserDefaults.standard.set(theme.rawValue, forKey: "theme")
-            refreshLayers()
         }
     }
     /// Light, dark or following the system (Settings, saved).
@@ -79,18 +54,28 @@ final class MapModel {
         }
     }
     /// Offset from the real clock, for scrubbing through the day.
-    var timeOffset: TimeInterval = 0 { didSet { refreshNight() } }
+    var timeOffset: TimeInterval = 0 { didSet { clockChanged() } }
     var now = Date()
+    /// `date` to the minute, as often as the map's clocks and night change.
+    /// The map follows this rather than `now`, so the clock's tick only
+    /// redraws what shows seconds.
+    private(set) var minute = MapModel.minute(of: Date())
+    /// The time the sidebar shows, to the minute like its clocks. It
+    /// follows `date`, but while the time is scrubbed at most ten times a
+    /// second: a list of clocks takes far longer to lay out than a frame of
+    /// the map.
+    private(set) var listDate = MapModel.minute(of: Date())
     /// 0 folds the map into a globe, 1 lays it flat.
-    var unfold: Double = 1 { didSet { if unfold != oldValue { refreshFolded() } } }
+    var unfold: Double = 1
 
     // Outputs.
     private(set) var map: MyriaMap?
+    /// The map's geometry on the GPU.
+    private(set) var gpuMap: GPUMap?
+    /// Draws the map; nil until it is ready, or without a Metal device.
+    private(set) var renderer: MetalMapRenderer?
     /// Counts finished builds, so views can tell when the map changed.
     private(set) var mapVersion = 0
-    private(set) var staticLayers: [LayerPath] = []
-    private(set) var nightLayers: [LayerPath] = []
-    private(set) var foldedLayers: [LayerPath] = []
     private(set) var isPlayingFold = false
     private(set) var colorSlots: [Int] = []
     private(set) var isBuilding = false
@@ -106,19 +91,16 @@ final class MapModel {
 
     private var data: GeoData?
     private var overlays: [MeshKind: MeshOverlay] = [:]
+    private var gpuMeshes: [MeshKind: GPUMesh] = [:]
     private var buildTask: Task<Void, Never>?
-    private var nightMinute = -1
     private var clock: Timer?
-    private var folding: Folding?
-    /// The folded frame being built off the main thread, if any.
-    private var foldTask: Task<Void, Never>?
-    /// The fold or its inputs changed while a frame was being built.
-    private var foldIsStale = false
-    /// Group outlines for the current map, built on first use.
-    @ObservationIgnored private var outlines: [Int: Path] = [:]
+    /// Clock labels for the minute and style they were made for.
+    @ObservationIgnored private var labelCache: (key: LabelKey, texts: [SceneText])?
     /// `-unfold 0.4` on the command line starts partly folded.
     private var launchUnfold = UserDefaults.standard.string(forKey: "unfold").flatMap(Double.init)
-    private var foldTimer: Timer?
+    private var foldLink: CADisplayLink?
+    @ObservationIgnored private var listDateUpdate: Task<Void, Never>?
+    @ObservationIgnored private var listDateUpdated = Date.distantPast
 
     var date: Date { now.addingTimeInterval(timeOffset) }
     var style: MapStyle { theme.style(dark: dark) }
@@ -140,7 +122,10 @@ final class MapModel {
         }
         buildTask = Task {
             do {
+                // Compiling the shaders overlaps with loading the data.
+                async let renderer = Task.detached(priority: .userInitiated) { try? MetalMapRenderer() }.value
                 let loaded = try await Task.detached(priority: .userInitiated) { try GeoData.bundled() }.value
+                self.renderer = await renderer
                 data = loaded
                 buildTask = nil
                 rebuild()
@@ -152,7 +137,32 @@ final class MapModel {
 
     private func tick() {
         now = Date()
-        refreshNight()
+        clockChanged()
+    }
+
+    private static func minute(of date: Date) -> Date {
+        Date(timeIntervalSince1970: (date.timeIntervalSince1970 / 60).rounded(.down) * 60)
+    }
+
+    private func clockChanged() {
+        let minute = Self.minute(of: date)
+        if minute != self.minute { self.minute = minute }
+        updateListDate()
+    }
+
+    private func updateListDate() {
+        let wait = 0.1 - Date().timeIntervalSince(listDateUpdated)
+        guard wait > 0 else {
+            listDateUpdated = Date()
+            if minute != listDate { listDate = minute }
+            return
+        }
+        guard listDateUpdate == nil else { return }
+        listDateUpdate = Task {
+            try? await Task.sleep(for: .seconds(wait))
+            listDateUpdate = nil
+            updateListDate()
+        }
     }
 
     /// Re-cuts and unfolds the map for the current settings, off the main thread.
@@ -163,148 +173,108 @@ final class MapModel {
         status = "Unfolding \(meshKind.title.lowercased())…"
         let configuration = MapConfiguration(mesh: meshKind, cuts: cuts, grouping: grouping,
                                              centerLongitude: centerLongitude, referenceDate: date)
-        let cached = overlays[meshKind]
-        let options = sceneOptions()
+        let cached = overlays[meshKind], cachedMesh = gpuMeshes[meshKind], renderer = renderer
         buildTask = Task {
-            let result = await Task.detached(priority: .userInitiated) { () -> (MyriaMap, [LayerPath], [Int])? in
+            let result = await Task.detached(priority: .userInitiated) { () -> (MyriaMap, GPUMap?)? in
                 do {
                     let base = try cached ?? MeshOverlay(kind: configuration.mesh, data: data)
+                    // The mesh's buffers serve every map cut from it; for a
+                    // new mesh they are made while the map is cut.
+                    async let mesh = renderer.map { try cachedMesh ?? $0.makeMesh(RenderMesh(base), kind: configuration.mesh) }
                     let map = MyriaMap(base: base, data: data, configuration: configuration)
-                    let layers = map.scene(options).paths.map(LayerPath.init)
-                    return (map, layers, map.colorSlots)
+                    return (map, try await mesh.flatMap { try renderer?.makeMap(map, mesh: $0) })
                 } catch {
                     return nil
                 }
             }.value
             guard !Task.isCancelled else { return }
             isBuilding = false
-            guard let (map, layers, slots) = result else {
+            guard let (map, gpuMap) = result else {
                 status = "Could not build the map"
                 return
             }
             overlays[configuration.mesh] = map.base
+            gpuMeshes[configuration.mesh] = gpuMap?.mesh
             self.map = map
+            self.gpuMap = gpuMap
             mapVersion += 1
-            folding = nil
-            outlines = [:]
-            // Colours or layers may have changed while the map was building.
-            staticLayers = options == sceneOptions() ? layers : map.scene(sceneOptions()).paths.map(LayerPath.init)
-            colorSlots = slots
+            labelCache = nil
+            colorSlots = map.colorSlots
             selectedGroup = nil
             hover = nil
-            nightMinute = -1
-            refreshNight()
             if let initial = launchUnfold {
                 launchUnfold = nil
                 unfold = initial
             }
-            refreshFolded()
-            status = "\(map.mesh.faceCount) faces · \(map.projection.cutEdges.count) cuts · \(map.pieces().count) pieces"
+            status = renderer == nil ? "This Mac has no Metal device to draw the map"
+                : "\(map.mesh.faceCount) faces · \(map.projection.cutEdges.count) cuts · \(map.pieces().count) pieces"
         }
     }
 
-    /// Scene options for the static layers (everything but night and labels,
-    /// so the date doesn't matter and is fixed).
-    private func sceneOptions() -> SceneOptions {
-        var options = SceneOptions(date: .distantPast, style: style)
-        options.showNight = false
-        options.showLabels = false
-        options.showLand = display.land
-        options.showCoastlines = display.coastlines
-        options.showBorders = display.borders
-        options.showCuts = display.cuts
-        options.showMesh = display.mesh
-        return options
-    }
-
-    private func refreshLayers() {
-        guard let map else { return }
-        staticLayers = map.scene(sceneOptions()).paths.map(LayerPath.init)
-        nightMinute = -1
-        refreshNight()
-        refreshFolded()
-    }
-
-    /// Builds the folded layers off the main thread, one frame at a time.
-    /// Changes made meanwhile are picked up when the frame is done, so the
-    /// slider and the animation never queue up work or block the window.
-    private func refreshFolded() {
-        guard let map, unfold < 1 else {
-            foldedLayers = []
-            return
-        }
-        guard foldTask == nil else {
-            foldIsStale = true
-            return
-        }
-        let cached = folding, unfold = unfold, version = mapVersion
-        var options = SceneOptions(date: date, style: style)
-        options.showLand = display.land
-        foldTask = Task {
-            let (folding, layers) = await Task.detached(priority: .userInitiated) { [options] in
-                let folding = cached ?? map.folding()
-                return (folding, map.foldedScene(unfold: unfold, folding: folding, options: options).paths.map(LayerPath.init))
-            }.value
-            foldTask = nil
-            // A frame for a map that has since been rebuilt is dropped.
-            if version == mapVersion {
-                self.folding = folding
-                if self.unfold < 1 { foldedLayers = layers }
+    /// What the map view draws for a viewport.
+    func frame(viewport: Viewport) -> MapFrame {
+        // Night moves with the minute, like the clocks.
+        var frame = MapFrame(viewport: viewport, contentsScale: 1, date: minute, style: style)
+        frame.unfold = unfold
+        frame.showNight = display.night
+        frame.showLand = display.land
+        frame.showCoastlines = display.coastlines
+        frame.showBorders = display.borders
+        frame.showCuts = display.cuts
+        frame.showMesh = display.mesh
+        if unfold >= 1 {
+            if let hoverGroup, hoverGroup != selectedGroup {
+                frame.highlights.append(.init(group: hoverGroup, width: 1.2))
             }
-            if foldIsStale {
-                foldIsStale = false
-                refreshFolded()
-            }
+            if let selectedGroup { frame.highlights.append(.init(group: selectedGroup, width: 2)) }
+            frame.labels = labels()
         }
+        return frame
     }
 
-    /// Animates from the globe to the flat map (or back when already flat).
+    /// Animates from the globe to the flat map (or back when already flat),
+    /// a step per displayed frame.
     func playFold() {
-        foldTimer?.invalidate()
-        let start = Date(), from = unfold, to: Double = unfold >= 1 ? 0 : 1
+        foldLink?.invalidate()
+        let from = unfold, to: Double = unfold >= 1 ? 0 : 1
         let duration = 3.5 * abs(to - from)
+        var start: CFTimeInterval?
         isPlayingFold = true
-        foldTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated {
-                guard let self else { return }
-                let t = min(1, Date().timeIntervalSince(start) / max(duration, 0.01))
-                let eased = t < 0.5 ? 2 * t * t : 1 - pow(-2 * t + 2, 2) / 2
-                self.unfold = from + (to - from) * eased
-                if t >= 1 {
-                    self.foldTimer?.invalidate()
-                    self.foldTimer = nil
-                    self.isPlayingFold = false
-                }
+        let step = FrameStep { [weak self] link in
+            guard let self else { return link.invalidate() }
+            let shown = link.targetTimestamp
+            let t = min(1, (shown - (start ?? shown)) / max(duration, 0.01))
+            if start == nil { start = shown }
+            let eased = t < 0.5 ? 2 * t * t : 1 - pow(-2 * t + 2, 2) / 2
+            unfold = from + (to - from) * eased
+            if t >= 1 {
+                link.invalidate()
+                foldLink = nil
+                isPlayingFold = false
             }
         }
-    }
-
-    private func refreshNight() {
-        guard let map else { return }
-        guard display.night else {
-            nightLayers = []
-            return
+        foldLink = NSScreen.main?.displayLink(target: step, selector: #selector(FrameStep.step(_:)))
+        foldLink?.add(to: .main, forMode: .common)
+        if foldLink == nil {
+            unfold = to
+            isPlayingFold = false
         }
-        let minute = Int(date.timeIntervalSince1970 / 60)
-        guard minute != nightMinute else { return }
-        nightMinute = minute
-        nightLayers = map.nightLayers(date: date, style: style).map(LayerPath.init)
     }
 
+    private struct LabelKey: Equatable {
+        let minute: Date
+        let style: MapStyle
+        let mapVersion: Int
+    }
+
+    /// Clock labels, remade when the minute, the colours or the map change.
     func labels() -> [SceneText] {
         guard let map, display.labels else { return [] }
-        return map.labelTexts(SceneOptions(date: date, style: style))
-    }
-
-    /// The outline of a zone group in map coordinates.
-    func outline(ofGroup g: Int) -> Path? {
-        guard let map else { return nil }
-        if let path = outlines[g] { return path }
-        let path = Path { p in
-            for line in map.outline(ofGroup: g) { p.addLines(line.map { CGPoint(x: $0.x, y: $0.y) }) }
-        }
-        outlines[g] = path
-        return path
+        let key = LabelKey(minute: minute, style: style, mapVersion: mapVersion)
+        if let labelCache, labelCache.key == key { return labelCache.texts }
+        let texts = map.labelTexts(SceneOptions(date: minute, style: style))
+        labelCache = (key, texts)
+        return texts
     }
 
     func zoneColor(group: Int) -> Color {
@@ -359,12 +329,29 @@ final class MapModel {
         }
     }
 
-    /// Zone groups sorted by current UTC offset, with a representative region.
+    /// Zone groups sorted by their UTC offset at `listDate`, with a
+    /// representative region.
     func zoneRows() -> [(group: ZoneGroup, region: TimeZoneRegion)] {
         guard let map else { return [] }
         let labelRegion = Dictionary(map.labels.map { ($0.group, $0.region) }, uniquingKeysWith: { a, _ in a })
+        let date = listDate
         return map.grouping.groups
-            .map { g in (g, map.atlas.regions[labelRegion[g.id] ?? g.primaryRegion]) }
-            .sorted { ($0.1.utcOffset(at: date), $0.1.identifier) < ($1.1.utcOffset(at: date), $1.1.identifier) }
+            .map { g in
+                let region = map.atlas.regions[labelRegion[g.id] ?? g.primaryRegion]
+                return (group: g, region: region, offset: region.utcOffset(at: date))
+            }
+            .sorted { ($0.offset, $0.region.identifier) < ($1.offset, $1.region.identifier) }
+            .map { ($0.group, $0.region) }
     }
+}
+
+/// Calls back on every display link frame.
+private final class FrameStep: NSObject {
+    let body: @MainActor (CADisplayLink) -> Void
+
+    init(_ body: @escaping @MainActor (CADisplayLink) -> Void) {
+        self.body = body
+    }
+
+    @MainActor @objc func step(_ link: CADisplayLink) { body(link) }
 }

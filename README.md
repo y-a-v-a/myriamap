@@ -64,7 +64,9 @@ up shows that it really is the globe:
    dihedral angle.
 6. **Rendering.** A backend-neutral scene (zone fills, land, day/night with
    civil, nautical and astronomical twilight, coastlines, borders, cuts and
-   clocks) is drawn to SVG, to PNG through Core Graphics, or in SwiftUI.
+   clocks) is drawn to SVG, or to PNG and GIF through Core Graphics (large
+   images in parallel bands, animation frames in parallel). The app draws
+   the same layers with Metal (see below).
 
 Close up, the faces, the staircase cuts along the borders and the slits
 inside each zone are visible (`--show-mesh --show-cuts`):
@@ -92,7 +94,7 @@ Things to know:
 
 A SwiftUI macOS app (macOS 14+):
 
-- the unfolded map with pinch, ⌘-scroll, drag and double-click zoom
+- the unfolded map, drawn with Metal at the display's frame rate, with pinch, ⌘-scroll, drag and double-click zoom
 - hover cards with local time, abbreviation, UTC offset and coordinates; click to select a zone
 - a sidebar of every zone's live clock, sorted by offset, marking "yesterday" and "tomorrow"
 - a time scrubber (±24 h) to watch day and night move
@@ -108,6 +110,42 @@ swift run MyriamapApp            # run straight from the package
 ./scripts/bundle-app.sh          # or build dist/Myriamap.app (release, signed ad hoc, with icon)
 open dist/Myriamap.app
 ```
+
+### Drawing on the GPU
+
+The map is uploaded once and then only moved, so panning, zooming, folding
+and scrubbing through time change a few numbers per frame instead of
+redrawing tens of thousands of paths:
+
+- **Fills.** Every face's zone and land rings are triangulated once per
+  mesh, in the face's own coordinates, by a sweep that cuts them into
+  trapezoids under the nonzero winding rule. It needs no hole bridging and
+  copes with what clipping leaves behind (zero-width bridges, holes touching
+  the face edge). A per-face transform places the triangles: a 2D rigid
+  motion on the flat map, the hinge poses while folding. The poses are
+  composed along the hinge tree, the trunk first and the subtrees hanging
+  off it in parallel.
+- **Night** is worked out per pixel from the face planes and the sun's
+  direction, with antialiased twilight edges.
+- **Lines** (coastlines, borders, cuts, faces, outlines) are antialiased
+  analytically; each colour's coverage is gathered first, so joins and
+  overlaps don't darken.
+- **Slits.** Hairlines in the zone colours run along cut edges underneath
+  the fills, so they only show in the slits. A layer of whole faces under
+  everything, whose flat corners are placed in double precision and so
+  meet exactly at hinges, keeps hairline cracks between triangles from
+  showing the page through.
+- **Culling.** Each map regroups its geometry into a grid of cells, and a
+  frame draws only the cells in view.
+- **Clocks** are set with Core Text into small textures, cached per size
+  step and made in the background; until a new one is ready, a label keeps
+  its previous texture.
+
+On an M2, a frame of the default map (18 432 faces) in a 1500 × 860 window
+takes about 0.2 ms on the CPU and 1–2 ms on the GPU, and zoomed in about
+0.3 ms on the GPU; drawing the same paths with SwiftUI's `Canvas` took
+50–150 ms. A test renders the map with Metal and with Core Graphics and
+compares them pixel by pixel.
 
 ### Colour schemes
 
@@ -168,7 +206,7 @@ Building a map takes about 0.15 s after the ~0.1 s data load.
 swift test
 ```
 
-87 tests (Swift Testing) cover the following:
+111 tests (Swift Testing) cover the following:
 
 - **Geometry:** Euler characteristic and planarity of the meshes, the spanning tree, hinge
   coincidence and rigidity of the unfolding (cut count = V − 1), point
@@ -185,14 +223,20 @@ swift test
 - **Colour:** WCAG contrast and OKLab distance against reference values,
   label legibility and distinct fills in every scheme and variant, and
   scenes painted in the chosen scheme.
+- **GPU:** the triangulation covers exactly the nonzero-winding area (holes,
+  touching holes, clipping bridges, overlaps, self-intersections, random
+  polygons), the triangles and outlines of every face, culling that keeps
+  every face in view, poses composed in parallel against the plain
+  composition, Metal renders against Core Graphics (light, dark, zoomed in,
+  folded), no cracks between triangles, labels and highlights.
 
 ## Layout
 
 | Path | Contents |
 |---|---|
-| `Sources/MyriaGeometry` | vectors, polyhedra, topology, spanning trees, unfolding, folding, point location, clipping |
+| `Sources/MyriaGeometry` | vectors, polyhedra, topology, spanning trees, unfolding, folding, point location, clipping, triangulation |
 | `Sources/ZoneAtlas` | GeoJSON, tiled polygon/segment layers, timezone regions and clocks, subsolar point, bundled data |
-| `Sources/Myriamap` | face overlay, cut strategies, map builder, labels, colour themes, scenes, SVG/PNG/GIF renderers, viewport |
+| `Sources/Myriamap` | face overlay, cut strategies, map builder, labels, colour themes, scenes, SVG/PNG/GIF renderers, GPU geometry and the Metal renderer, viewport |
 | `Sources/MyriamapCLI` | the `myriamap` command |
 | `Sources/MyriamapApp` | the SwiftUI app |
 | `scripts/prepare-data.sh` | downloads and simplifies the data (needs `npx`, uses mapshaper) |

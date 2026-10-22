@@ -17,12 +17,7 @@ extension MyriaMap {
                             buckets: Int = 48) -> MapScene {
         let style = options.style
         let poses = folding.poses(unfold: unfold)
-        let closed = 1 - min(max(unfold, 0), 1)
-        let tiltRotation = Mat3.rotation(axis: .unitX, angle: tilt * closed)
-        // Tilt about the globe's centre (behind the root face) so the closed
-        // globe stays centred on the map's origin.
-        let pivot = Vec3(0, 0, -closed)
-        let camera = Pose3(rotation: tiltRotation, translation: pivot - tiltRotation.apply(pivot))
+        let camera = FoldCamera(unfold: unfold, tilt: tilt).pose
         let shade = style.surface.mixed(with: RGBA(0, 0, 0), 0.6)
 
         // Every colour a face can take, numbered once, so batches are keyed
@@ -58,7 +53,7 @@ extension MyriaMap {
             let pose = poses[f]
             views[f] = Affine2(camera.concatenating(pose))
             depth[f] = camera.apply(pose.apply(Planar.centroid(mesh.frames[f].localVertices))).z
-            facing[f] = tiltRotation.apply(pose.rotation.c2).z >= 0
+            facing[f] = camera.rotation.apply(pose.rotation.c2).z >= 0
         }
         let lo = depth.min() ?? 0, hi = depth.max() ?? 1
         let span = max(hi - lo, 1e-9)
@@ -94,6 +89,21 @@ extension MyriaMap {
         var bounds = projection.bounds
         bounds.include(Rect2(minX: -1.1, minY: -1.25, maxX: 1.1, maxY: 1.25))
         return MapScene(bounds: bounds, background: style.page, paths: paths, texts: [])
+    }
+}
+
+/// The camera the folding map is seen through, along -z: a gentle tilt
+/// that vanishes as the map lies flat.
+struct FoldCamera {
+    let pose: Pose3
+
+    init(unfold: Double, tilt: Double) {
+        let closed = 1 - min(max(unfold, 0), 1)
+        let rotation = Mat3.rotation(axis: .unitX, angle: tilt * closed)
+        // Tilt about the globe's centre (behind the root face) so the closed
+        // globe stays centred on the map's origin.
+        let pivot = Vec3(0, 0, -closed)
+        pose = Pose3(rotation: rotation, translation: pivot - rotation.apply(pivot))
     }
 }
 

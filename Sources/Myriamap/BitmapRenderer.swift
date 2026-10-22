@@ -12,18 +12,36 @@ public enum BitmapRendererError: Error {
 
 /// Renders a scene with Core Graphics (PNG export, previews).
 public enum BitmapRenderer {
+    /// Large images are drawn as horizontal bands in parallel, each into
+    /// its own rows of one bitmap. The band count is fixed, so the output
+    /// doesn't depend on the machine.
     public static func image(_ scene: MapScene, width: Int = 2400) throws -> CGImage {
         let m = CanvasMapping(bounds: scene.bounds, width: Double(width))
         let height = Int(m.height)
-        guard let ctx = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+        let bands = width * height >= 1 << 20 ? 8 : 1
+        let bytesPerRow = width * 4
+        guard let ctx = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: bytesPerRow,
                                   space: CGColorSpace(name: CGColorSpace.sRGB)!,
-                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue),
+              let data = ctx.data
         else { throw BitmapRendererError.contextCreationFailed }
-        // Draw with a top-left origin like the SVG output.
-        ctx.translateBy(x: 0, y: CGFloat(height))
-        ctx.scaleBy(x: 1, y: -1)
-        draw(scene, in: ctx, mapping: m)
-        guard let image = ctx.makeImage() else { throw BitmapRendererError.contextCreationFailed }
+        // Immutable paths, read by every band.
+        nonisolated(unsafe) let paths = cgPaths(scene, mapping: m)
+        nonisolated(unsafe) let rows = data
+        let made = parallelMap(bands) { b -> Bool in
+            let top = height * b / bands, bottom = height * (b + 1) / bands
+            guard let band = CGContext(data: rows + top * bytesPerRow, width: width, height: bottom - top,
+                                       bitsPerComponent: 8, bytesPerRow: bytesPerRow,
+                                       space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                       bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+            else { return false }
+            // Draw with a top-left origin like the SVG output.
+            band.translateBy(x: 0, y: CGFloat(bottom))
+            band.scaleBy(x: 1, y: -1)
+            draw(scene, paths: paths, in: band, mapping: m)
+            return true
+        }
+        guard !made.contains(false), let image = ctx.makeImage() else { throw BitmapRendererError.contextCreationFailed }
         return image
     }
 
@@ -38,7 +56,8 @@ public enum BitmapRenderer {
         return data as Data
     }
 
-    /// Encodes scenes as a looping animated GIF.
+    /// Encodes scenes as a looping animated GIF. Frames are rasterised in
+    /// parallel and encoded in order.
     /// - Parameter delays: seconds each frame is shown.
     public static func gif(_ scenes: [MapScene], delays: [Double], width: Int) throws -> Data {
         let data = NSMutableData()
@@ -47,9 +66,10 @@ public enum BitmapRenderer {
         }
         let loop = [kCGImagePropertyGIFDictionary: [kCGImagePropertyGIFLoopCount: 0]] as CFDictionary
         CGImageDestinationSetProperties(dest, loop)
-        for (scene, delay) in zip(scenes, delays) {
+        let images = parallelMap(scenes.count) { i in Result { try image(scenes[i], width: width) } }
+        for (image, delay) in zip(images, delays) {
             let frame = [kCGImagePropertyGIFDictionary: [kCGImagePropertyGIFDelayTime: delay]] as CFDictionary
-            CGImageDestinationAddImage(dest, try image(scene, width: width), frame)
+            CGImageDestinationAddImage(dest, try image.get(), frame)
         }
         guard CGImageDestinationFinalize(dest) else { throw BitmapRendererError.encodingFailed }
         return data as Data
@@ -58,16 +78,27 @@ public enum BitmapRenderer {
     /// Draws into a context whose user space has a top-left origin and the
     /// given mapping's pixel units.
     public static func draw(_ scene: MapScene, in ctx: CGContext, mapping m: CanvasMapping) {
-        ctx.setFillColor(cgColor(scene.background))
-        ctx.fill(CGRect(x: 0, y: 0, width: m.width, height: m.height))
-        ctx.setLineJoin(.round)
-        ctx.setLineCap(.round)
-        for path in scene.paths where !path.subpaths.isEmpty {
+        draw(scene, paths: cgPaths(scene, mapping: m), in: ctx, mapping: m)
+    }
+
+    /// The scene's paths in the mapping's pixel units, one per scene path.
+    static func cgPaths(_ scene: MapScene, mapping m: CanvasMapping) -> [CGPath] {
+        scene.paths.map { path in
             let p = CGMutablePath()
             for sub in path.subpaths where sub.count >= 2 {
                 p.addLines(between: sub.map { let q = m.apply($0); return CGPoint(x: q.x, y: q.y) })
                 if path.closed { p.closeSubpath() }
             }
+            return p.copy() ?? p
+        }
+    }
+
+    static func draw(_ scene: MapScene, paths: [CGPath], in ctx: CGContext, mapping m: CanvasMapping) {
+        ctx.setFillColor(cgColor(scene.background))
+        ctx.fill(CGRect(x: 0, y: 0, width: m.width, height: m.height))
+        ctx.setLineJoin(.round)
+        ctx.setLineCap(.round)
+        for (path, p) in zip(scene.paths, paths) where !path.subpaths.isEmpty {
             if let fill = path.fill {
                 ctx.addPath(p)
                 ctx.setFillColor(cgColor(fill))

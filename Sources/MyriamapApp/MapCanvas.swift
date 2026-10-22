@@ -16,12 +16,12 @@ struct MapCanvas: View {
         GeometryReader { geometry in
             let size = Vec2(geometry.size.width, geometry.size.height)
             let view = currentViewport(size: size)
-            // Separate views, so the hover card moving with the pointer
-            // doesn't redraw the map underneath it.
             ZStack(alignment: .topLeading) {
-                MapLayers(model: model, viewport: view)
-                HighlightLayer(model: model, viewport: view)
-                ClockLabels(model: model, viewport: view)
+                if let renderer = model.renderer {
+                    MetalMapView(renderer: renderer, map: model.gpuMap, frame: model.frame(viewport: view))
+                } else {
+                    Color(model.style.page)
+                }
                 if let hover = model.hover {
                     HoverCard(info: hover, date: model.date)
                         .offset(x: min(hover.viewPoint.x + 16, geometry.size.width - 240),
@@ -120,94 +120,6 @@ struct MapCanvas: View {
         var v = view
         v.center = label.position
         withAnimation(.easeOut(duration: 0.3)) { viewport = v }
-    }
-}
-
-extension Viewport {
-    /// Map coordinates to view coordinates.
-    var transform: CGAffineTransform {
-        CGAffineTransform(a: scale, b: 0, c: 0, d: -scale,
-                          tx: size.x / 2 - center.x * scale, ty: size.y / 2 + center.y * scale)
-    }
-}
-
-/// The map itself: the flat map with day and night, or the folded globe.
-/// Reads only what it draws, so it redraws for those changes and for the
-/// viewport, not for hover or clocks.
-struct MapLayers: View {
-    let model: MapModel
-    let viewport: Viewport
-
-    var body: some View {
-        let background = Color(model.style.page)
-        // Folded frames arrive from a background build; until the first one
-        // is ready the flat map stands in.
-        let layers = model.foldedLayers.isEmpty ? model.staticLayers + model.nightLayers : model.foldedLayers
-        let viewport = viewport
-        Canvas(opaque: true, rendersAsynchronously: true) { context, size in
-            context.fill(Path(CGRect(origin: .zero, size: size)), with: .color(background))
-            var mapContext = context
-            mapContext.concatenate(viewport.transform)
-            for layer in layers {
-                if let fill = layer.fill {
-                    mapContext.fill(layer.path, with: .color(fill), style: FillStyle(eoFill: false, antialiased: true))
-                }
-                if let stroke = layer.stroke {
-                    mapContext.stroke(layer.path, with: .color(stroke),
-                                      style: StrokeStyle(lineWidth: layer.lineWidth / viewport.scale,
-                                                         lineCap: .round, lineJoin: .round))
-                }
-            }
-        }
-    }
-}
-
-/// Outlines of the selected and the hovered zone.
-struct HighlightLayer: View {
-    let model: MapModel
-    let viewport: Viewport
-
-    var body: some View {
-        let selected = model.selectedGroup
-        let groups = model.unfold >= 1 ? Set([selected, model.hoverGroup].compactMap { $0 }) : []
-        let outlines = groups.compactMap { g in model.outline(ofGroup: g).map { (path: $0, width: g == selected ? 2.0 : 1.2) } }
-        let color = Color(model.style.highlight)
-        let viewport = viewport
-        Canvas { context, _ in
-            var mapContext = context
-            mapContext.concatenate(viewport.transform)
-            for outline in outlines {
-                mapContext.stroke(outline.path, with: .color(color),
-                                  style: StrokeStyle(lineWidth: outline.width / viewport.scale,
-                                                     lineCap: .round, lineJoin: .round))
-            }
-        }
-        .allowsHitTesting(false)
-    }
-}
-
-/// Every piece's clock. The model's clock ticks every second, which
-/// refreshes them.
-struct ClockLabels: View {
-    let model: MapModel
-    let viewport: Viewport
-
-    var body: some View {
-        let labels = model.unfold >= 1 ? model.labels() : []
-        let viewport = viewport
-        Canvas { context, _ in
-            for label in labels {
-                let q = viewport.toView(label.position)
-                let size = label.size * viewport.scale
-                guard size >= 7 else { continue }
-                let text = Text(label.text)
-                    .font(.system(size: size, weight: label.weight == .bold ? .semibold : .regular))
-                    .monospacedDigit()
-                    .foregroundStyle(Color(label.color))
-                context.draw(text, at: CGPoint(x: q.x, y: q.y), anchor: .center)
-            }
-        }
-        .allowsHitTesting(false)
     }
 }
 

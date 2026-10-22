@@ -65,18 +65,17 @@ struct ContentView: View {
     }
 }
 
-/// Every zone group with its current time, sorted by UTC offset.
+/// Every zone group with its current time, sorted by UTC offset. It
+/// follows the model's `listDate`, which changes once a minute.
 struct ZoneList: View {
     @Bindable var model: MapModel
 
     var body: some View {
-        TimelineView(.periodic(from: .now, by: 1)) { _ in
-            List(selection: $model.selectedGroup) {
-                ForEach(model.zoneRows(), id: \.group.id) { row in
-                    ZoneRow(region: row.region, date: model.date, color: model.zoneColor(group: row.group.id),
-                            memberCount: row.group.regions.count)
-                        .tag(row.group.id)
-                }
+        List(selection: $model.selectedGroup) {
+            ForEach(model.zoneRows(), id: \.group.id) { row in
+                ZoneRow(region: row.region, date: model.listDate, color: model.zoneColor(group: row.group.id),
+                        memberCount: row.group.regions.count)
+                    .tag(row.group.id)
             }
         }
     }

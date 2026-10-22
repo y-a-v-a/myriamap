@@ -176,6 +176,31 @@ struct ClockTests {
         #expect(TimeZoneRegion(id: 0, identifier: "Pacific/Honolulu").dayOffset(at: early) == -1)
     }
 
+    @Test func clocksAgreeWithTheCalendar() throws {
+        // Every bundled region, at instants around the year, daylight saving
+        // changes and both sides of midnight, before and after 1970.
+        let regions = try ZoneAtlas.bundled().regions
+        let instants = stride(from: -86_400.0 * 400, to: 86_400 * 800, by: 86_400 * 37.3 + 3_607.7).map {
+            Date(timeIntervalSince1970: 1_790_000_000 + $0)
+        } + [Date(timeIntervalSince1970: -1_234_567.8), Date(timeIntervalSince1970: 0)]
+        for region in regions {
+            var calendar = Calendar(identifier: .gregorian)
+            calendar.timeZone = region.timeZone
+            var utc = Calendar(identifier: .gregorian)
+            utc.timeZone = TimeZone(identifier: "UTC")!
+            for date in instants {
+                let c = calendar.dateComponents([.year, .month, .day, .hour, .minute, .second], from: date)
+                let u = utc.dateComponents([.year, .month, .day], from: date)
+                let expected = String(format: "%02d:%02d:%02d", c.hour!, c.minute!, c.second!)
+                #expect(region.clockTime(at: date, seconds: true) == expected, "\(region.identifier) at \(date)")
+                #expect(region.clockTime(at: date) == String(expected.prefix(5)))
+                #expect(abs(region.localHour(at: date) - (Double(c.hour!) + Double(c.minute!) / 60 + Double(c.second!) / 3600)) < 1e-9)
+                let days = utc.dateComponents([.day], from: utc.date(from: u)!, to: utc.date(from: DateComponents(year: c.year, month: c.month, day: c.day))!).day!
+                #expect(region.dayOffset(at: date) == days, "\(region.identifier) at \(date)")
+            }
+        }
+    }
+
     @Test func subsolarPointAtSolsticesAndEquinox() {
         let iso = ISO8601DateFormatter()
         let june = SolarPosition.subsolarPoint(at: iso.date(from: "2026-06-21T12:00:00Z")!)

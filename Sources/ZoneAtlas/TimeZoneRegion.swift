@@ -6,18 +6,15 @@ public struct TimeZoneRegion: Sendable, Identifiable, Hashable {
     public let id: Int
     public let identifier: String
     public let timeZone: TimeZone
+    /// Readable place name: "America/New_York" becomes "New York".
+    public let placeName: String
 
     public init(id: Int, identifier: String) {
         self.id = id
         self.identifier = identifier
         timeZone = TimeZone(identifier: identifier) ?? Self.fallbackTimeZone(identifier)
-    }
-
-    /// Readable place name: "America/New_York" becomes "New York".
-    public var placeName: String {
         let last = identifier.split(separator: "/").last.map(String.init) ?? identifier
-        if identifier.hasPrefix("Etc/") { return "Open ocean" }
-        return last.replacingOccurrences(of: "_", with: " ")
+        placeName = identifier.hasPrefix("Etc/") ? "Open ocean" : last.replacingOccurrences(of: "_", with: " ")
     }
 
     /// Seconds east of UTC at `date`, daylight saving included.
@@ -34,38 +31,38 @@ public struct TimeZoneRegion: Sendable, Identifiable, Hashable {
 
     /// Wall-clock time in the region, e.g. "14:05".
     public func clockTime(at date: Date, seconds: Bool = false) -> String {
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = timeZone
-        let c = calendar.dateComponents([.hour, .minute, .second], from: date)
-        let hm = String(format: "%02d:%02d", c.hour ?? 0, c.minute ?? 0)
-        return seconds ? hm + String(format: ":%02d", c.second ?? 0) : hm
+        // UTC plus the offset in force: what a calendar in this zone reads,
+        // without building one for every clock on every update.
+        let s = localSecondOfDay(at: date)
+        let hm = Self.twoDigits(s / 3600) + ":" + Self.twoDigits(s / 60 % 60)
+        return seconds ? hm + ":" + Self.twoDigits(s % 60) : hm
     }
 
     /// Fractional local hour of day in [0, 24).
     public func localHour(at date: Date) -> Double {
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = timeZone
-        let c = calendar.dateComponents([.hour, .minute, .second], from: date)
-        return Double(c.hour ?? 0) + Double(c.minute ?? 0) / 60 + Double(c.second ?? 0) / 3600
+        Double(localSecondOfDay(at: date)) / 3600
     }
 
     /// Calendar day offset relative to UTC: -1, 0 or +1.
     public func dayOffset(at date: Date) -> Int {
-        var utc = Calendar(identifier: .gregorian)
-        utc.timeZone = TimeZone(identifier: "UTC")!
-        var local = utc
-        local.timeZone = timeZone
-        let u = utc.dateComponents([.year, .month, .day], from: date)
-        let l = local.dateComponents([.year, .month, .day], from: date)
-        guard let ud = utc.date(from: u), let ld = utc.date(from: l) else { return 0 }
-        return Int((ld.timeIntervalSince(ud) / 86_400).rounded())
+        let t = Int(date.timeIntervalSince1970.rounded(.down))
+        return Self.floorDivide(t + utcOffset(at: date), 86_400) - Self.floorDivide(t, 86_400)
     }
+
+    /// Whole seconds since local midnight.
+    func localSecondOfDay(at date: Date) -> Int {
+        let t = Int(date.timeIntervalSince1970.rounded(.down)) + utcOffset(at: date)
+        return t - Self.floorDivide(t, 86_400) * 86_400
+    }
+
+    static func floorDivide(_ a: Int, _ b: Int) -> Int { a >= 0 ? a / b : -((-a + b - 1) / b) }
+
+    static func twoDigits(_ n: Int) -> String { n < 10 ? "0" + String(n) : String(n) }
 
     public static func offsetLabel(seconds: Int) -> String {
         if seconds == 0 { return "UTC±00:00" }
-        let sign = seconds > 0 ? "+" : "−"
         let m = abs(seconds) / 60
-        return String(format: "UTC%@%02d:%02d", sign, m / 60, m % 60)
+        return "UTC" + (seconds > 0 ? "+" : "−") + twoDigits(m / 60) + ":" + twoDigits(m % 60)
     }
 
     /// For identifiers the system database lacks, fixed offsets like
