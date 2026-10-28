@@ -6,7 +6,9 @@ import ZoneAtlas
 struct ContentView: View {
     @Bindable var model: MapModel
     @Environment(\.colorScheme) private var colorScheme
-    @State private var showInspector = true
+    @SceneStorage("inspector") private var showInspector = true
+    /// The height of this window's toolbar.
+    @State private var toolbarHeight = 0.0
 
     var body: some View {
         NavigationSplitView {
@@ -19,36 +21,67 @@ struct ContentView: View {
                     ProgressView(model.status)
                 }
             }
-            .navigationTitle("Myriamap")
-            .navigationSubtitle(model.status)
-            .inspector(isPresented: $showInspector) {
-                SettingsPanel(model: model)
-                    .inspectorColumnWidth(min: 240, ideal: 270)
-            }
-            .toolbar {
-                ToolbarItemGroup {
-                    TimeScrubber(model: model)
-                    Button {
-                        export()
-                    } label: {
-                        Label("Export", systemImage: "square.and.arrow.up")
+            .overlay {
+                if #available(macOS 26, *) {
+                    // The bar behind the toolbar, across the whole window: macOS 26
+                    // only draws it beside a system inspector.
+                    VStack(spacing: 0) {
+                        WindowBackground()
+                            .overlay(alignment: .bottom) { Divider() }
+                            .frame(height: toolbarHeight)
+                        Spacer(minLength: 0)
                     }
-                    .help("Export the map as SVG or PNG")
-                    .disabled(model.map == nil)
-                    Button {
-                        showInspector.toggle()
-                    } label: {
-                        Label("Settings", systemImage: "sidebar.trailing")
-                    }
-                    .help("Show or hide the settings")
+                    .ignoresSafeArea()
+                    .allowsHitTesting(false)
                 }
             }
+            .onGeometryChange(for: Double.self) { $0.safeAreaInsets.top } action: { toolbarHeight = $0 }
+            .navigationTitle("Myriamap")
+            .navigationSubtitle(model.status)
+            .floatingInspector(isPresented: $showInspector) {
+                SettingsPanel(model: model)
+            }
+            .toolbar { toolbar }
         }
         .onAppear {
             model.dark = colorScheme == .dark
             model.start()
         }
         .onChange(of: colorScheme) { model.dark = colorScheme == .dark }
+    }
+
+    @ToolbarContentBuilder
+    private var toolbar: some ToolbarContent {
+        // In the middle of the bar: the toolbar's trailing end stands over the inspector.
+        ToolbarItem(placement: .principal) {
+            TimeScrubber(model: model)
+        }
+        if #available(macOS 26, *) {
+            // The buttons stand bare, as the sidebar's does: on the floating
+            // inspector, and beside it too, as the toolbar does not give a
+            // background back once it is hidden.
+            buttons.sharedBackgroundVisibility(.hidden)
+        } else {
+            buttons
+        }
+    }
+
+    private var buttons: some ToolbarContent {
+        ToolbarItemGroup {
+            Button {
+                export()
+            } label: {
+                Label("Export", systemImage: "square.and.arrow.up")
+            }
+            .help("Export the map as SVG or PNG")
+            .disabled(model.map == nil)
+            Button {
+                withAnimation(.smooth(duration: 0.3)) { showInspector.toggle() }
+            } label: {
+                Label("Settings", systemImage: "sidebar.trailing")
+            }
+            .help("Show or hide the settings")
+        }
     }
 
     private func export() {
@@ -63,6 +96,20 @@ struct ContentView: View {
             NSAlert(error: error).runModal()
         }
     }
+}
+
+/// The window's background material, tinted by the wallpaper as the
+/// system's own bars are.
+private struct WindowBackground: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSVisualEffectView {
+        let view = NSVisualEffectView()
+        view.material = .windowBackground
+        view.blendingMode = .withinWindow
+        view.state = .followsWindowActiveState
+        return view
+    }
+
+    func updateNSView(_ view: NSVisualEffectView, context: Context) {}
 }
 
 /// Every zone group with its current time, sorted by UTC offset. It
@@ -154,7 +201,7 @@ struct SettingsPanel: View {
 
     var body: some View {
         Form {
-            Section("Cuts") {
+            Section {
                 Picker("Cut along", selection: $model.cuts) {
                     Text("Timezone borders").tag(MapConfiguration.Cuts.timezones)
                     Text("Oceans (van Wijk)").tag(MapConfiguration.Cuts.landmass)
@@ -169,8 +216,8 @@ struct SettingsPanel: View {
                         if !editing { model.rebuild() }
                     }
                 }
-            }
-            Section("Myriahedron") {
+            } header: { InspectorHeader("Cuts") }
+            Section {
                 Picker("Mesh", selection: $model.meshKind) {
                     ForEach(Self.meshes, id: \.self) { Text($0.title).tag($0) }
                 }
@@ -178,8 +225,8 @@ struct SettingsPanel: View {
                     + "Graticule steps that divide 7.5° align with the nautical timezone meridians.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-            }
-            Section("Layers") {
+            } header: { InspectorHeader("Myriahedron") }
+            Section {
                 Toggle("Day and night", isOn: $model.display.night)
                 Toggle("Clocks", isOn: $model.display.labels)
                 Toggle("Land", isOn: $model.display.land)
@@ -187,23 +234,23 @@ struct SettingsPanel: View {
                 Toggle("Timezone borders", isOn: $model.display.borders)
                 Toggle("Cut edges", isOn: $model.display.cuts)
                 Toggle("Faces", isOn: $model.display.mesh)
-            }
-            Section("Colours") {
+            } header: { InspectorHeader("Layers") }
+            Section {
                 LabeledContent("Scheme", value: model.theme.title)
                 SettingsLink {
                     Text("Appearance and Colours…")
                 }
                 .help("Choose light or dark and the colour scheme (⌘,)")
-            }
+            } header: { InspectorHeader("Colours") }
             if model.isBuilding {
                 Section { ProgressView().controlSize(.small) }
             }
-            Section("Data") {
+            Section {
                 Text("Timezones: timezone-boundary-builder 2026e (ODbL, © OpenStreetMap contributors). "
                     + "Land: Natural Earth (public domain).")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-            }
+            } header: { InspectorHeader("Data") }
         }
         .formStyle(.grouped)
     }
