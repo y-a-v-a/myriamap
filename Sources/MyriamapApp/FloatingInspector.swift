@@ -25,12 +25,7 @@ struct FloatingInspector<Panel: View>: ViewModifier {
 
     func body(content: Content) -> some View {
         if #available(macOS 26, *) {
-            // The map keeps to the room left of the pane.
-            content.safeAreaInset(edge: .trailing, spacing: 0) {
-                if isPresented {
-                    pane.transition(.move(edge: .trailing).combined(with: .opacity))
-                }
-            }
+            content.modifier(SlidingPane(shown: isPresented ? 1 : 0, room: width + Self.margin, pane: pane))
         } else {
             content.inspector(isPresented: $isPresented) {
                 panel.inspectorColumnWidth(min: Self.widths.lowerBound, ideal: 290, max: Self.widths.upperBound)
@@ -74,6 +69,33 @@ struct FloatingInspector<Panel: View>: ViewModifier {
                         savedWidth = (savedWidth.clamped(to: Self.widths) - drag.translation.width).clamped(to: Self.widths)
                     }
             )
+    }
+}
+
+/// Keeps the map to the room left of the pane. The room is laid out afresh
+/// at every step of the pane's coming and going, as the sidebar's is: an
+/// inserted view would give the map its final size at once and leave it to
+/// jump beneath the moving pane.
+private struct SlidingPane<Pane: View>: ViewModifier, Animatable {
+    /// How far the pane is in: 0 out of sight, 1 all the way.
+    nonisolated var shown: Double
+    /// The pane's width with its margin.
+    let room: Double
+    let pane: Pane
+
+    nonisolated var animatableData: Double {
+        get { shown }
+        set { shown = newValue }
+    }
+
+    func body(content: Content) -> some View {
+        content.safeAreaInset(edge: .trailing, spacing: 0) {
+            if shown > 0 {
+                Color.clear
+                    .frame(width: room * shown)
+                    .overlay(alignment: .leading) { pane.opacity(shown) }
+            }
+        }
     }
 }
 

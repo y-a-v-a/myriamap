@@ -22,6 +22,8 @@ final class MapMetalView: MTKView, MTKViewDelegate {
     private let renderer: MetalMapRenderer
     private var shown: MapFrame?
     private var map: GPUMap?
+    /// The drawable size of the last frame drawn.
+    private var drawnSize = CGSize.zero
 
     init(renderer: MetalMapRenderer) {
         self.renderer = renderer
@@ -35,6 +37,14 @@ final class MapMetalView: MTKView, MTKViewDelegate {
     }
 
     required init(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        // A panel sliding in or out resizes the view at every step, more
+        // often than the window gets round to displaying it: each size is
+        // drawn at once, or the layer stretches the last frame to fit.
+        if window != nil, drawableSize != drawnSize { draw() }
+    }
 
     /// Pointer events belong to the SwiftUI view around it.
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
@@ -54,7 +64,17 @@ final class MapMetalView: MTKView, MTKViewDelegate {
         else { return }
         frame.contentsScale = drawableSize.width / bounds.width
         renderer.encode(frame, map: map, into: drawable.texture, commandBuffer: commandBuffer)
-        commandBuffer.present(drawable)
-        commandBuffer.commit()
+        // A frame for a new size goes out with the resize itself, not a
+        // frame after it.
+        presentsWithTransaction = drawableSize != drawnSize
+        drawnSize = drawableSize
+        if presentsWithTransaction {
+            commandBuffer.commit()
+            commandBuffer.waitUntilScheduled()
+            drawable.present()
+        } else {
+            commandBuffer.present(drawable)
+            commandBuffer.commit()
+        }
     }
 }
