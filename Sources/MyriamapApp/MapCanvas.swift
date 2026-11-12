@@ -151,17 +151,27 @@ struct ZoomControls: View {
     let reset: () -> Void
 
     var body: some View {
-        HStack(spacing: 0) {
-            Button(action: zoomOut) { Image(systemName: "minus.magnifyingglass") }
-                .help("Zoom out (or ⌘-scroll)")
-            Button(action: reset) { Image(systemName: "arrow.up.left.and.down.right.magnifyingglass") }
-                .help("Show the whole map")
-            Button(action: zoomIn) { Image(systemName: "plus.magnifyingglass") }
-                .help("Zoom in (or ⌘-scroll)")
+        HStack(spacing: 4) {
+            button("minus.magnifyingglass", "Zoom out (or ⌘-scroll)", zoomOut)
+            button("arrow.up.left.and.down.right.magnifyingglass", "Show the whole map", reset)
+            button("plus.magnifyingglass", "Zoom in (or ⌘-scroll)", zoomIn)
         }
         .buttonStyle(.borderless)
-        .padding(6)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
         .background(.regularMaterial, in: Capsule())
+    }
+
+    /// Twice the default icon size, each in a square that takes the
+    /// click anywhere inside it, so a near miss still lands on its icon.
+    private func button(_ symbol: String, _ help: String, _ action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 26))
+                .frame(width: 40, height: 40)
+                .contentShape(Rectangle())
+        }
+        .help(help)
     }
 }
 
